@@ -1,3 +1,4 @@
 build.bat
 *.exe
-test.t
+\test
+\net
