@@ -29,34 +29,10 @@ struct BencodeVal {
     bool is_list() const { return std::holds_alternative<BEN_List>(data); }
     bool is_dict() const { return std::holds_alternative<BEN_Dict>(data); }
 
-    const BEN_Int &get_int() const {
-        try {
-            return std::get<BEN_Int>(data);
-        } catch (std::exception &e) {
-            std::cout << "can't _get_int_, error: " << e.what() << std::endl;
-        }
-    }
-    const BEN_Str &get_str() const {
-        try {
-            return std::get<BEN_Str>(data);
-        } catch (std::exception &e) {
-            std::cout << "can't _get_str_, error: " << e.what() << std::endl;
-        }
-    }
-    const BEN_List &get_list() const {
-        try {
-            return std::get<BEN_List>(data);
-        } catch (std::exception &e) {
-            std::cout << "can't _get_list_, error: " << e.what() << std::endl;
-        }
-    }
-    const BEN_Dict &get_dict() const {
-        try {
-            return std::get<BEN_Dict>(data);
-        } catch (std::exception &e) {
-            std::cout << "can't _get_dict_, error: " << e.what() << std::endl;
-        }
-    }
+    const BEN_Int &get_int() const { return std::get<BEN_Int>(data); }
+    const BEN_Str &get_str() const { return std::get<BEN_Str>(data); }
+    const BEN_List &get_list() const { return std::get<BEN_List>(data); }
+    const BEN_Dict &get_dict() const { return std::get<BEN_Dict>(data); }
 
     const BEN_Int *get_if_int() const { return std::get_if<BEN_Int>(&data); }
     const BEN_Str *get_if_str() const { return std::get_if<BEN_Str>(&data); }

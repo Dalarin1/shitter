@@ -171,6 +171,11 @@ struct Conn {
 
 struct HttpConn {
 
+    struct response{
+        bool success;
+        std::istringstream data;
+    };
+
     HINTERNET hSession = nullptr;
     HINTERNET hConnect = nullptr;
     HINTERNET hRequest = nullptr;
@@ -197,7 +202,7 @@ struct HttpConn {
             WinHttpCloseHandle(hSession);
     }
 
-    bool get(const std::wstring &path) {
+    response get(const std::wstring &path) {
 
         if (hRequest) {
             WinHttpCloseHandle(hRequest);
@@ -222,20 +227,20 @@ struct HttpConn {
         WinHttpAddRequestHeaders(hRequest, headers, -1,
                                  WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
         if (!hRequest)
-            return false;
+            return {false, std::istringstream()};
 
         if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                                 WINHTTP_NO_REQUEST_DATA, 0, 0, 0))
-            return false;
+            return {false, std::istringstream()};
 
         if (!WinHttpReceiveResponse(hRequest, NULL))
-            return false;
+            return {false, std::istringstream()};
 
         DWORD size = 0;
         std::string response;
         do {
             if (!WinHttpQueryDataAvailable(hRequest, &size))
-                return false;
+                return {false, std::istringstream()};
 
             if (!size)
                 break;
@@ -245,19 +250,14 @@ struct HttpConn {
             DWORD downloaded = 0;
 
             if (!WinHttpReadData(hRequest, buffer.data(), size, &downloaded))
-                return false;
+                return {false, std::istringstream()};
 
-            buffer[downloaded] = '\0';
+            // buffer[downloaded] = '\0';
             response.append(buffer.data(), downloaded);
-            // std::cout << buffer.data();
 
         } while (size > 0);
-        std::cout << response << std::endl;
         std::istringstream ss = std::istringstream(response);
-        BencodeVal result = read_bencode(ss);
-        print_bencodeval(result);
-
-        return true;
+        return {true, std::move(ss)};
     }
 };
 

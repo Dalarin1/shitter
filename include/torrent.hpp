@@ -7,11 +7,11 @@ class Torrent {
 
   public:
     struct file {
-        uint64_t lenght;
+        uint64_t length;
         std::vector<std::string> path;
     };
     std::string urlencoded_info_hash;
-    std::string info_hash; // 20 bytes (SHA1 hash of _info_ value) 
+    std::string info_hash; // 20 bytes (SHA1 hash of _info_ value)
     std::string announce_url;
 
     struct Info {

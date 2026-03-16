@@ -58,7 +58,7 @@ Torrent::Torrent(std::string filename) {
     if (info_dict.count("files") > 0) {
         for (const auto &file : info_dict.at("files").get_list()) {
             auto f = Torrent::file();
-            f.lenght = file.get_dict().at("length").get_int();
+            f.length = file.get_dict().at("length").get_int();
             for (const auto &path_part : file.get_dict().at("path").get_list()) {
                 f.path.push_back(path_part.get_str());
             }
@@ -101,7 +101,7 @@ void print_torrent(const Torrent &t) {
     } else {
         std::cout << "    files:\n";
         for (const auto &f : t.info.files) {
-            std::cout << "      length: " << f.lenght << "\n";
+            std::cout << "      length: " << f.length << "\n";
             std::cout << "      path: ";
             for (const auto &part : f.path)
                 std::cout << part << "/";
