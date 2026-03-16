@@ -109,6 +109,9 @@ struct Conn {
         // пробуем каждый addrinfo до удачного connect
         for (addrinfo *p = result; p != nullptr; p = p->ai_next) {
             sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+            DWORD timeout = 3000;
+            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
+            setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
             if (sock == INVALID_SOCKET)
                 continue;
             if (connect(sock, p->ai_addr, (int)p->ai_addrlen) == 0) {
@@ -171,7 +174,7 @@ struct Conn {
 
 struct HttpConn {
 
-    struct response{
+    struct response {
         bool success;
         std::istringstream data;
     };

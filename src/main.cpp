@@ -4,8 +4,6 @@
 #include "torrent_session.hpp"
 
 int main() {
-    // info_hash для фотошопа(правильный) : 669fe3ad321a4d64a57bd7b03dbc1b2a17de86f4
-    // вычисленный мной: 53f1488e234bda7e9297c1fc76658466f1211e43
     auto torrent_file = std::ifstream("test/Adobe Photoshop 2021 22.4.1 [2021,Multi Ru] "
                                       "RePack m0nkrus [rutracker-5970995].torrent");
     BencodeVal parsed_torrent_file = read_bencode(torrent_file);
@@ -43,6 +41,17 @@ int main() {
     for (int i = 0; i < peers.size(); i++) {
         std::cout << peers[i].ip_str() << '\n';
     }
-    std::cout << std::endl;
+    int p = 0;
+tryen:
+    try {
+        std::cout << "trying peer №" << p << ": " + peers[p].str() << std::endl;
+        PeerConnection pc = PeerConnection(&torrent, peers[p]);
+        pc.send_handshake();
+        std::cout << std::endl;
+    } catch (...) {
+        p++;
+        goto tryen;
+    }
+
     return 0;
 }

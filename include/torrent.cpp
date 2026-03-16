@@ -2,6 +2,7 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <array>
 #include "bencode.hpp"
 #include "torrent.hpp"
 #include "sha1.hpp"
@@ -38,8 +39,12 @@ Torrent::Torrent(std::string filename) {
     auto f = std::ifstream(filename, std::ios::binary);
     info_hash = (find_info_hash(f));
 
+    for(int i = 0; i < 40; i += 2){
+        info_hash_raw[i / 2] = static_cast<uint8_t>(std::stoi(info_hash.substr(i, 2), 0, 16));
+    }
+
     std::string temp;
-    for (size_t i = 0; i < info_hash.size(); i += 2) {
+    for (size_t i = 0; i < 40; i += 2) {
         unsigned char byte = std::stoi(info_hash.substr(i, 2), 0, 16);
         char buf[4];
         snprintf(buf, sizeof(buf), "%%%02X", byte);
