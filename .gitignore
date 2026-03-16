@@ -2,3 +2,5 @@ build.bat
 *.exe
 \test
 \net
+.clang-format
+build.py
