@@ -38,20 +38,8 @@ int main() {
     }
     BencodeVal resp_decoded = read_bencode(resp.data);
     std::vector<Peer> peers = parse_peers(resp_decoded.get_dict().at("peers").get_str());
-    for (int i = 0; i < peers.size(); i++) {
-        std::cout << peers[i].ip_str() << '\n';
-    }
-    int p = 0;
-tryen:
-    try {
-        std::cout << "trying peer №" << p << ": " + peers[p].str() << std::endl;
-        PeerConnection pc = PeerConnection(&torrent, peers[p]);
-        pc.send_handshake();
-        std::cout << std::endl;
-    } catch (...) {
-        p++;
-        goto tryen;
-    }
+
+    
 
     return 0;
 }
