@@ -10,6 +10,11 @@
 #include "protocol.hpp"
 #include "sha1.hpp"
 
+inline std::string u32_to_str(uint32_t val) {
+    uint32_t net_val = htonl(val);
+    return std::string((char *)&net_val, 4);
+}
+
 struct Torrent {
     struct file {
         uint64_t length;
@@ -19,7 +24,7 @@ struct Torrent {
     std::string info_hash;            // 40 hex char string (SHA1 hash of _info_ value)
     std::array<uint8_t, 20> info_hash_raw; // 20 bytes
     std::string announce_url;
-
+    size_t total_length; // total length of all files in bytes
     struct Info {
         std::string name;                // Name to save the file/directory as.
         uint64_t piece_length;           // Number of bytes in each piece
@@ -32,10 +37,16 @@ struct Torrent {
     ~Torrent() = default;
 };
 
-enum class PieceStatus { Missing, Downloading, Done };
+struct PieceStatus {
+    enum class State { Missing, Downloading, Done } state = State::Missing;
+    std::vector<uint8_t> buffer;
+    uint32_t downloaded = 0;
+    uint32_t total_size = 0;
+};
 
 struct TorrentState {
     const Torrent &torrent;
+    std::string client_id;
     std::vector<PieceStatus> pieces;
 
     TorrentState(const Torrent &t);
@@ -75,15 +86,12 @@ struct Peer {
 };
 std::vector<Peer> parse_peers(const std::string &peers_binary);
 
-inline std::string u32_to_str(uint32_t val);
-
 std::string find_info_hash(std::istream &file);
 
 struct PeerConnection {
     Peer peer;
     Conn conn;
     TorrentState &torrent_state;
-    std::string client_id;
     time_t last_keep_alive;
 
     bool am_choking = true;
@@ -92,6 +100,10 @@ struct PeerConnection {
     bool peer_interested = false;
 
     std::vector<bool> bitfield;
+
+    PeerConnection() = delete;
+
+    PeerConnection(Peer peer, TorrentState &ts);
 
     void send_handshake();
     Message recv_handshake();
@@ -110,6 +122,10 @@ struct PeerConnection {
 
     void run();
 };
+
+// TODO
+std::vector<PeerConnection> connect_to_peers(const std::vector<Peer> &peers,
+                                                          TorrentState &ts, uint16_t conn_count);
 
 void print_torrent(const Torrent &torrent);
 

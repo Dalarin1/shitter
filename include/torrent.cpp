@@ -1,9 +1,5 @@
 #include "torrent.hpp"
 
-inline std::string u32_to_str(uint32_t val) {
-    uint32_t net_val = htonl(val);
-    return std::string((char *)&net_val, 4);
-}
 // ─── Peer ────────────────────────────────────────────────────────────────────
 
 std::string Peer::ip_str() const {
@@ -31,19 +27,39 @@ std::vector<Peer> parse_peers(const std::string &peers_binary) {
 
 // ─── TorrentState ────────────────────────────────────────────────────────────
 
-TorrentState::TorrentState(const Torrent &t)
-    : torrent(t), pieces(t.info.pieces.size(), PieceStatus::Missing) {}
+TorrentState::TorrentState(const Torrent &t) : torrent(t) {
+    pieces.resize(t.info.pieces.size());
+
+    for (size_t i = 0; i < pieces.size(); i++) {
+
+        bool is_last = (i == pieces.size() - 1);
+
+        for (size_t i = 0; i < pieces.size(); i++) {
+            // последний кусок может быть меньше
+            bool is_last = (i == pieces.size() - 1);
+            pieces[i].total_size = is_last
+                                       ? t.total_length % t.info.piece_length // остаток
+                                       : t.info.piece_length;
+            // если длина делится нацело — последний кусок тоже полный
+            if (is_last && pieces[i].total_size == 0)
+                pieces[i].total_size = t.info.piece_length;
+            pieces[i].state = PieceStatus::State::Missing;
+            // pieces[i].buffer.resize(pieces[i].total_size);
+        }
+    }
+}
 
 int TorrentState::next_missing_piece() const {
     for (size_t i = 0; i < pieces.size(); i++)
-        if (pieces[i] == PieceStatus::Missing)
+        if (pieces[i].state == PieceStatus::State::Missing)
             return (int)i;
     return -1;
 }
 
 bool TorrentState::is_done() const {
-    return std::all_of(pieces.begin(), pieces.end(),
-                       [](PieceStatus s) { return s == PieceStatus::Done; });
+    return std::all_of(pieces.begin(), pieces.end(), [](const PieceStatus &s) {
+        return s.state == PieceStatus::State::Done;
+    });
 }
 
 // ─── find_info_hash ──────────────────────────────────────────────────────────
@@ -97,19 +113,23 @@ Torrent::Torrent(std::string filename) {
     info.piece_length = info_dict.at("piece length").get_int();
     info.name = info_dict.at("name").get_str();
 
-    if (info_dict.count("length") > 0)
+    if (info_dict.count("length") > 0) {
         info.length = info_dict.at("length").get_int();
-    else
+        total_length = info.length;
+    } else
         info.length = -1;
 
     if (info_dict.count("files") > 0) {
+        size_t len = 0;
         for (const auto &file : info_dict.at("files").get_list()) {
             auto f = Torrent::file();
             f.length = file.get_dict().at("length").get_int();
+            len += f.length;
             for (const auto &path_part : file.get_dict().at("path").get_list())
                 f.path.push_back(path_part.get_str());
             info.files.push_back(f);
         }
+        total_length = len;
     }
 
     std::string pieces_str = dict["info"].get_dict().at("pieces").get_str();
@@ -119,6 +139,9 @@ Torrent::Torrent(std::string filename) {
 
 // ─── PeerConnection ──────────────────────────────────────────────────────────
 
+PeerConnection::PeerConnection(Peer _peer, TorrentState &ts)
+    : peer(_peer), torrent_state(ts), conn(_peer.ip_str(), _peer.port_str()) {}
+
 void PeerConnection::send_handshake() {
     std::string handshake;
     handshake.reserve(68);
@@ -127,7 +150,7 @@ void PeerConnection::send_handshake() {
     handshake += std::string(8, '\0');
     for (int i = 0; i < 20; i++)
         handshake += static_cast<char>(torrent_state.torrent.info_hash_raw[i]);
-    handshake += client_id;
+    handshake += torrent_state.client_id;
     conn.send_all(handshake);
 }
 
@@ -288,6 +311,15 @@ void PeerConnection::run() {
             break;
         }
     }
+}
+std::vector<PeerConnection> connect_to_peers(const std::vector<Peer> &peers,
+                                             TorrentState &ts, uint16_t conn_count = 50) {
+    std::vector<PeerConnection> res;
+    res.reserve(conn_count);
+    for (uint16_t i = 0; i < conn_count; i++){
+        res.emplace_back(peers[i], ts);
+    }
+    return res;
 }
 
 // ─── print_torrent ───────────────────────────────────────────────────────────
