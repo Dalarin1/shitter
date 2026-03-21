@@ -71,6 +71,12 @@ URL parse_url(const std::string &url) {
     return res;
 }
 
+Conn::Conn(Conn &&other) noexcept
+    : sock(other.sock), result(other.result), host(std::move(other.host)),
+      port(std::move(other.port)) {
+    other.sock = INVALID_SOCKET;
+    other.result = nullptr;
+}
 Conn::Conn(const std::string &_host, const std::string &_port)
     : host(std::move(_host)), port(std::move(_port)) {
     init_wsa();
@@ -87,11 +93,12 @@ Conn::Conn(const std::string &_host, const std::string &_port)
     // пробуем каждый addrinfo до удачного connect
     for (addrinfo *p = result; p != nullptr; p = p->ai_next) {
         sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-        DWORD timeout = 3000;
-        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
-        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
+
         if (sock == INVALID_SOCKET)
             continue;
+        DWORD timeout = 1000;
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
+        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
         if (connect(sock, p->ai_addr, (int)p->ai_addrlen) == 0) {
             // connected
             return;

@@ -28,6 +28,7 @@ struct Conn {
     std::string host;
     std::string port;
 
+    Conn(Conn&& other) noexcept;
     Conn(const std::string &_url);
     Conn(const std::string &_host, const std::string &_port);
 

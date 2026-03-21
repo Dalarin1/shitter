@@ -94,6 +94,8 @@ struct PeerConnection {
     TorrentState &torrent_state;
     time_t last_keep_alive;
 
+    bool handshook = false;
+
     bool am_choking = true;
     bool am_interested = false;
     bool peer_choking = true;
@@ -102,7 +104,7 @@ struct PeerConnection {
     std::vector<bool> bitfield;
 
     PeerConnection() = delete;
-
+    PeerConnection(PeerConnection&& other) noexcept;
     PeerConnection(Peer peer, TorrentState &ts);
 
     void send_handshake();

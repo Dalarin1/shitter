@@ -31,21 +31,13 @@ TorrentState::TorrentState(const Torrent &t) : torrent(t) {
     pieces.resize(t.info.pieces.size());
 
     for (size_t i = 0; i < pieces.size(); i++) {
-
         bool is_last = (i == pieces.size() - 1);
-
-        for (size_t i = 0; i < pieces.size(); i++) {
-            // последний кусок может быть меньше
-            bool is_last = (i == pieces.size() - 1);
-            pieces[i].total_size = is_last
-                                       ? t.total_length % t.info.piece_length // остаток
-                                       : t.info.piece_length;
-            // если длина делится нацело — последний кусок тоже полный
-            if (is_last && pieces[i].total_size == 0)
-                pieces[i].total_size = t.info.piece_length;
-            pieces[i].state = PieceStatus::State::Missing;
-            // pieces[i].buffer.resize(pieces[i].total_size);
-        }
+        pieces[i].total_size = is_last
+                                   ? t.total_length % t.info.piece_length
+                                   : t.info.piece_length;
+        if (is_last && pieces[i].total_size == 0)
+            pieces[i].total_size = t.info.piece_length;
+        pieces[i].state = PieceStatus::State::Missing;
     }
 }
 
@@ -139,8 +131,14 @@ Torrent::Torrent(std::string filename) {
 
 // ─── PeerConnection ──────────────────────────────────────────────────────────
 
+PeerConnection::PeerConnection(PeerConnection &&other) noexcept
+    : peer(other.peer), conn(std::move(other.conn)), torrent_state(other.torrent_state),
+      last_keep_alive(other.last_keep_alive), am_choking(other.am_choking),
+      am_interested(other.am_interested), peer_choking(other.peer_choking),
+      peer_interested(other.peer_interested), bitfield(std::move(other.bitfield)) {}
+
 PeerConnection::PeerConnection(Peer _peer, TorrentState &ts)
-    : peer(_peer), torrent_state(ts), conn(_peer.ip_str(), _peer.port_str()) {}
+    : peer(_peer),  conn(_peer.ip_str(), _peer.port_str()),torrent_state(ts) {}
 
 void PeerConnection::send_handshake() {
     std::string handshake;
@@ -184,6 +182,7 @@ bool PeerConnection::do_handshake() {
         std::cerr << "Peer sent incorrect info_hash\n";
         return false;
     }
+    handshook = true;
     return true;
 }
 
@@ -273,7 +272,7 @@ void PeerConnection::send_request(uint32_t index, uint32_t begin, uint32_t lengt
 }
 
 void PeerConnection::run() {
-    if (!do_handshake()) {
+    if (!handshook && !do_handshake()) {
         std::cerr << "Handshake failed\n";
         return;
     }
@@ -316,8 +315,18 @@ std::vector<PeerConnection> connect_to_peers(const std::vector<Peer> &peers,
                                              TorrentState &ts, uint16_t conn_count = 50) {
     std::vector<PeerConnection> res;
     res.reserve(conn_count);
-    for (uint16_t i = 0; i < conn_count; i++){
-        res.emplace_back(peers[i], ts);
+
+    for (uint16_t i = 0; i < conn_count && i < peers.size(); i++) {
+        try {
+            PeerConnection pc = PeerConnection(peers[i], ts);
+            if (!pc.do_handshake()) {
+                std::cerr << peers[i].str() << " did not handshaked\n";
+                continue;
+            }
+            res.emplace_back(std::move(pc));
+        } catch (std::exception &e) {
+            std::cerr << peers[i].str() << " connection failed: " << e.what() << "\n";
+        }
     }
     return res;
 }

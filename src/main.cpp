@@ -8,6 +8,7 @@ int main() {
     Torrent torrent("test/Adobe Photoshop 2021 22.4.1 [2021,Multi Ru] "
                     "RePack m0nkrus [rutracker-5970995].torrent");
     print_torrent(torrent);
+    TorrentState torrent_state = TorrentState(torrent);
 
     std::wstring tracker_url_wstring =
         std::wstring(torrent.announce_url.begin(), torrent.announce_url.end());
@@ -36,6 +37,7 @@ int main() {
     BencodeVal resp_decoded = read_bencode(resp.data);
     std::vector<Peer> peers = parse_peers(resp_decoded.get_dict().at("peers").get_str());
 
-
+    std::vector<PeerConnection> peepers = connect_to_peers(peers, torrent_state, 10);
+    peepers[0].run();
     return 0;
 }
