@@ -117,11 +117,10 @@ struct PeerConnection {
     void send_not_interested();
     void send_keep_alive();
     void send_request(uint32_t index, uint32_t begin, uint32_t length);
-
-    // нужны для отдачи, сделать потом
     void send_bitfield();
-    void send_have(uint32_t index);
 
+    void send_have(uint32_t index);
+    void send_unchoke();
     void run();
 };
 

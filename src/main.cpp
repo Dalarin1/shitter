@@ -1,6 +1,34 @@
 #include "torrent.hpp"
+#include "spdlog/spdlog.h"
 
+void download_from_peers(const std::vector<Peer> &peers, TorrentState &ts,
+                         uint16_t conn_count = 10) {
+    std::vector<std::thread> threads;
+
+    for (uint16_t i = 0; i < conn_count && i < peers.size(); i++) {
+        try {
+            PeerConnection pc(peers[i], ts);
+            if (!pc.do_handshake()) {
+                spdlog::warn("[{}] Handshake failed, skipping", peers[i].str());
+                continue;
+            }
+            spdlog::info("[{}] Connected", peers[i].str());
+            threads.emplace_back([pc = std::move(pc)]() mutable {
+                try {
+                    pc.run();
+                } catch (const std::exception &e) {
+                    spdlog::warn("[{}] run() error: {}", pc.peer.str(), e.what());
+                }
+            });
+        } catch (std::exception &e) {
+            spdlog::warn("[{}] Connection failed: {}", peers[i].str(), e.what());
+        }
+    }
+
+    for (auto &t : threads) t.join();
+}
 int main() {
+    spdlog::set_level(spdlog::level::debug);
     auto torrent_file = std::ifstream("test/Adobe Photoshop 2021 22.4.1 [2021,Multi Ru] "
                                       "RePack m0nkrus [rutracker-5970995].torrent");
     BencodeVal parsed_torrent_file = read_bencode(torrent_file);
@@ -37,7 +65,16 @@ int main() {
     BencodeVal resp_decoded = read_bencode(resp.data);
     std::vector<Peer> peers = parse_peers(resp_decoded.get_dict().at("peers").get_str());
 
-    std::vector<PeerConnection> peepers = connect_to_peers(peers, torrent_state, 10);
-    peepers[0].run();
+    // std::vector<PeerConnection> peepers = connect_to_peers(peers, torrent_state, 10);
+    // if (peepers.empty()) {
+    //     spdlog::error("No peers connected");
+    //     return 1;
+    // }
+    // try {
+    //     peepers[0].run();
+    // } catch (const std::exception &e) {
+    //     spdlog::error("run() error: {}", e.what());
+    // }
+    download_from_peers(peers, torrent_state, 20);
     return 0;
 }

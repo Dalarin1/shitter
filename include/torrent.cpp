@@ -31,17 +31,18 @@ std::vector<Peer> parse_peers(const std::string &peers_binary) {
 
 TorrentState::TorrentState(const Torrent &t) : torrent(t) {
     pieces.resize(t.info.pieces.size());
+
+    client_id = "-BT7105-123456789101";
     for (size_t i = 0; i < pieces.size(); i++) {
         bool is_last = (i == pieces.size() - 1);
-        pieces[i].total_size = is_last
-                                   ? t.total_length % t.info.piece_length
-                                   : t.info.piece_length;
+        pieces[i].total_size =
+            is_last ? t.total_length % t.info.piece_length : t.info.piece_length;
         if (is_last && pieces[i].total_size == 0)
             pieces[i].total_size = t.info.piece_length;
         pieces[i].state = PieceStatus::State::Missing;
     }
-    spdlog::debug("TorrentState initialized: {} pieces, total {} bytes",
-                  pieces.size(), t.total_length);
+    spdlog::debug("TorrentState initialized: {} pieces, total {} bytes", pieces.size(),
+                  t.total_length);
 }
 
 int TorrentState::next_missing_piece() const {
@@ -132,8 +133,8 @@ Torrent::Torrent(std::string filename) {
             info.files.push_back(f);
         }
         total_length = len;
-        spdlog::info("Multi-file mode, {} files, total size: {} bytes",
-                     info.files.size(), total_length);
+        spdlog::info("Multi-file mode, {} files, total size: {} bytes", info.files.size(),
+                     total_length);
     }
 
     std::string pieces_str = dict["info"].get_dict().at("pieces").get_str();
@@ -145,10 +146,11 @@ Torrent::Torrent(std::string filename) {
 // ─── PeerConnection ──────────────────────────────────────────────────────────
 
 PeerConnection::PeerConnection(PeerConnection &&other) noexcept
-    : peer(other.peer), conn(std::move(other.conn)), torrent_state(other.torrent_state),
-      last_keep_alive(other.last_keep_alive), am_choking(other.am_choking),
-      am_interested(other.am_interested), peer_choking(other.peer_choking),
-      peer_interested(other.peer_interested), bitfield(std::move(other.bitfield)) {}
+    : handshook(other.handshook), peer(other.peer), conn(std::move(other.conn)),
+      torrent_state(other.torrent_state), last_keep_alive(other.last_keep_alive),
+      am_choking(other.am_choking), am_interested(other.am_interested),
+      peer_choking(other.peer_choking), peer_interested(other.peer_interested),
+      bitfield(std::move(other.bitfield)) {}
 
 PeerConnection::PeerConnection(Peer _peer, TorrentState &ts)
     : peer(_peer), conn(_peer.ip_str(), _peer.port_str()), torrent_state(ts) {
@@ -211,8 +213,16 @@ Message PeerConnection::recv_message() {
         int r = 0;
         while (received < n) {
             r = recv(conn.sock, inbuf.data() + received, n - received, 0);
-            if (r <= 0)
+            if (r == 0) {
+                throw std::runtime_error("Connection closed"); // пир закрыл соединение
+            }
+            if (r < 0) {
+                int err = WSAGetLastError();
+                // if (err == WSAETIMEDOUT) {
+                //     continue; // просто таймаут, пробуем ещё раз
+                // }
                 throw std::runtime_error("Connection closed");
+            }
             received += r;
         }
         return inbuf;
@@ -260,13 +270,13 @@ Message PeerConnection::recv_message() {
         msg.begin = ntohl(*reinterpret_cast<uint32_t *>(begin_buf.data()));
         std::string block_buf = read_exact(len - 9);
         msg.data = std::vector<uint8_t>(block_buf.begin(), block_buf.end());
-        spdlog::debug("[{}] Recv Piece index={} begin={} size={}",
-                      peer.str(), msg.index, msg.begin, msg.data.size());
+        spdlog::debug("[{}] Recv Piece index={} begin={} size={}", peer.str(), msg.index,
+                      msg.begin, msg.data.size());
         return msg;
     }
 
-    spdlog::debug("[{}] Recv unknown id={}, skipping {} bytes",
-                  peer.str(), (int)msg.type, len - 1);
+    spdlog::debug("[{}] Recv unknown id={}, skipping {} bytes", peer.str(), (int)msg.type,
+                  len - 1);
     read_exact(len - 1);
     return msg;
 }
@@ -275,25 +285,38 @@ void PeerConnection::send_interested() {
     spdlog::debug("[{}] Send Interested", peer.str());
     std::string buf = u32_to_str(1);
     buf.append(1, 2);
-    conn.send_all(buf);
+    try {
+        conn.send_all(buf);
+    } catch (const std::exception &e) {
+        spdlog::error("[{}] Send interested failed! Exception: {}", peer.str(), e.what());
+    };
 }
 
 void PeerConnection::send_not_interested() {
     spdlog::debug("[{}] Send NotInterested", peer.str());
     std::string buf = u32_to_str(1);
     buf.append(1, 3);
-    conn.send_all(buf);
+    try {
+        conn.send_all(buf);
+    } catch (const std::exception &e) {
+        spdlog::error("[{}] Send not interested failed! Exception: {}", peer.str(),
+                      e.what());
+    };
 }
 
 void PeerConnection::send_keep_alive() {
     spdlog::debug("[{}] Send KeepAlive", peer.str());
     std::string buf(4, '\0');
-    conn.send_all(buf);
+    try {
+        conn.send_all(buf);
+    } catch (const std::exception &e) {
+        spdlog::error("[{}] Send keep alive failed! Exception: {}", peer.str(), e.what());
+    };
 }
 
 void PeerConnection::send_request(uint32_t index, uint32_t begin, uint32_t length) {
-    spdlog::debug("[{}] Send Request index={} begin={} length={}",
-                  peer.str(), index, begin, length);
+    spdlog::debug("[{}] Send Request index={} begin={} length={}", peer.str(), index,
+                  begin, length);
     std::string req = u32_to_str(13);
     req += static_cast<char>(6);
     req += u32_to_str(index);
@@ -301,20 +324,47 @@ void PeerConnection::send_request(uint32_t index, uint32_t begin, uint32_t lengt
     req += u32_to_str(length);
     conn.send_all(req);
 }
+void PeerConnection::send_bitfield() {
+    size_t num_pieces = torrent_state.torrent.info.pieces.size();
+    size_t num_bytes = (num_pieces + 7) / 8; // округление вверх
 
+    std::string payload(num_bytes, '\0'); // все нули — нет ни одного куска
+
+    std::string msg = u32_to_str(1 + num_bytes); // length = 1 (id) + num_bytes
+    msg += static_cast<char>(5);                 // id = 5 (bitfield)
+    msg += payload;
+    conn.send_all(msg);
+    spdlog::debug("[{}] Sent bitfield ({} bytes)", peer.str(), num_bytes);
+}
+void PeerConnection::send_unchoke() {
+    spdlog::debug("[{}] Send unchoke", peer.str());
+    std::string buf = u32_to_str(1);
+    buf.append(1, 1);
+    try {
+        conn.send_all(buf);
+    } catch (const std::exception &e) {
+        spdlog::error("[{}] Send not interested failed! Exception: {}", peer.str(),
+                      e.what());
+    };
+}
 void PeerConnection::run() {
-    if (!handshook && !do_handshake()) {
-        spdlog::error("[{}] Handshake failed, aborting", peer.str());
-        return;
+    spdlog::debug("[{}] Run process started; Handshook = {}", peer.str(), handshook);
+    if (!handshook) {
+        if (!do_handshake()) {
+            spdlog::error("[{}] Handshake failed, aborting", peer.str());
+            return;
+        }
     }
 
     spdlog::info("[{}] Starting download loop", peer.str());
-
+    // send_bitfield();
+    send_interested();
     while (!torrent_state.is_done()) {
         Message msg = recv_message();
-
+        spdlog::debug("[{}] Got message type={}", peer.str(), (int)msg.type);
         switch (msg.type) {
         case MessageType::KeepAlive:
+            spdlog::info("[{}] KeepAlive", peer.str());
             send_keep_alive();
             break;
         case MessageType::Choke:
@@ -324,11 +374,18 @@ void PeerConnection::run() {
         case MessageType::Unchoke:
             peer_choking = false;
             spdlog::info("[{}] Unchoked", peer.str());
+            if (am_interested) {
+                int piece = torrent_state.next_missing_piece();
+                if (piece >= 0 && piece < (int)bitfield.size() && bitfield[piece]) {
+                    send_request(piece, 0, 16384);
+                }
+            }
             break;
         case MessageType::Have:
-            if (msg.index < bitfield.size()){
+            if (msg.index < bitfield.size()) {
                 spdlog::info("[{}] Got have", peer.str());
-                bitfield[msg.index] = true;}
+                bitfield[msg.index] = true;
+            }
             break;
         case MessageType::Bitfield:
             bitfield.clear();
@@ -341,9 +398,14 @@ void PeerConnection::run() {
             am_interested = true;
             break;
         case MessageType::Piece:
+            spdlog::info("[{}] Got piece", peer.str());
             break;
         default:
+            spdlog::info("[{}] Got msg: {}", peer.str(), (uint8_t)msg.type);
             break;
+        }
+        if (!peer_choking) {
+            spdlog::info("Sending request");
         }
     }
     spdlog::info("[{}] Download complete", peer.str());

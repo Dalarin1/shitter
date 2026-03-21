@@ -79,7 +79,37 @@ Conn::Conn(Conn &&other) noexcept
     other.sock = INVALID_SOCKET;
     other.result = nullptr;
 }
+// переписать в неблокирующий коннект с таймаутом 2 секунды
+// Conn::Conn(const std::string &_host, const std::string &_port)
+//     : host(_host), port(_port) {
+//     init_wsa();
+//     addrinfo hints{};
+//     hints.ai_family = AF_UNSPEC;
+//     hints.ai_socktype = SOCK_STREAM;
+//     hints.ai_protocol = IPPROTO_TCP;
 
+//     int rc = getaddrinfo(host.c_str(), port.c_str(), &hints, &result);
+//     if (rc != 0)
+//         throw std::runtime_error("getaddrinfo: " + std::to_string(rc));
+
+//     for (addrinfo *p = result; p != nullptr; p = p->ai_next) {
+//         sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+//         if (sock == INVALID_SOCKET)
+//             continue;
+//         DWORD timeout = 1000;
+//         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
+//         setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
+//         if (connect(sock, p->ai_addr, (int)p->ai_addrlen) == 0) {
+//             spdlog::debug("Connected to {}:{}", host, port);
+//             return;
+//         }
+//         closesocket(sock);
+//         sock = INVALID_SOCKET;
+//     }
+//     freeaddrinfo(result);
+//     result = nullptr;
+//     throw std::runtime_error("Could not connect to any addr");
+// }
 Conn::Conn(const std::string &_host, const std::string &_port)
     : host(_host), port(_port) {
     init_wsa();
@@ -89,28 +119,75 @@ Conn::Conn(const std::string &_host, const std::string &_port)
     hints.ai_protocol = IPPROTO_TCP;
 
     int rc = getaddrinfo(host.c_str(), port.c_str(), &hints, &result);
-    if (rc != 0)
+    if (rc != 0) {
         throw std::runtime_error("getaddrinfo: " + std::to_string(rc));
-
+    }
     for (addrinfo *p = result; p != nullptr; p = p->ai_next) {
         sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
         if (sock == INVALID_SOCKET)
             continue;
-        DWORD timeout = 1000;
+
+        u_long block = 1;
+        if (ioctlsocket(sock, FIONBIO, &block) == SOCKET_ERROR) {
+            closesocket(sock);
+            continue;
+        }
+
+        //		if (connect(sock, p->ai_addr, (int)p->ai_addrlen) == 0) {
+        //			spdlog::debug("Connected to {}:{}", host, port);
+        //			return;
+        //		}
+        if (connect(sock, p->ai_addr, (int)p->ai_addrlen) == SOCKET_ERROR) {
+            if (WSAGetLastError() != WSAEWOULDBLOCK) {
+                closesocket(sock);
+                sock = INVALID_SOCKET;
+                continue;
+            }
+            fd_set setW, setE;
+            FD_ZERO(&setW);
+            FD_SET(sock, &setW);
+            FD_ZERO(&setE);
+            FD_SET(sock, &setE);
+
+            timeval time_out = {0};
+            time_out.tv_sec = 3;
+            time_out.tv_usec = 0;
+
+            int ret = select(0, NULL, &setW, &setE, &time_out);
+            if (ret <= 0) {
+                closesocket(sock);
+                sock = INVALID_SOCKET;
+                continue;
+            }
+            if (FD_ISSET(sock, &setE)) {
+                closesocket(sock);
+                sock = INVALID_SOCKET;
+                continue;
+            }
+            int err = 0, errlen = sizeof(err);
+            getsockopt(sock, SOL_SOCKET, SO_ERROR, (char *)&err, &errlen);
+            if (err != 0) {
+                closesocket(sock);
+                sock = INVALID_SOCKET;
+                continue;
+            }
+        }
+        block = 0;
+        if (ioctlsocket(sock, FIONBIO, &block) == SOCKET_ERROR) {
+            closesocket(sock);
+            sock = INVALID_SOCKET;
+            continue;
+        }
+        DWORD timeout = 5000;
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
         setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
-        if (connect(sock, p->ai_addr, (int)p->ai_addrlen) == 0) {
-            spdlog::debug("Connected to {}:{}", host, port);
-            return;
-        }
-        closesocket(sock);
-        sock = INVALID_SOCKET;
+        spdlog::debug("Connected to {}:{}", host, port);
+        return;
     }
     freeaddrinfo(result);
     result = nullptr;
     throw std::runtime_error("Could not connect to any addr");
 }
-
 Conn::~Conn() {
     if (sock != INVALID_SOCKET)
         closesocket(sock);
