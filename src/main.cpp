@@ -1,7 +1,4 @@
-#include "bencode.hpp"
-#include "protocol.hpp"
 #include "torrent.hpp"
-#include "torrent_session.hpp"
 
 int main() {
     auto torrent_file = std::ifstream("test/Adobe Photoshop 2021 22.4.1 [2021,Multi Ru] "
@@ -39,7 +36,6 @@ int main() {
     BencodeVal resp_decoded = read_bencode(resp.data);
     std::vector<Peer> peers = parse_peers(resp_decoded.get_dict().at("peers").get_str());
 
-    
 
     return 0;
 }

@@ -1,6 +1,4 @@
-#ifndef INCLUDE_BENCODE_HPP_
 #include "bencode.hpp"
-#endif // INCLUDE_BENCODE_HPP_
 
 BencodeVal _read_int(std::istream &file) {
     std::string buf;
