@@ -7,9 +7,12 @@
 #include <fstream>
 #include <sstream>
 #include <mutex>
+#include <filesystem>
 #include "bencode.hpp"
 #include "protocol.hpp"
 #include "sha1.hpp"
+
+namespace fs = std::filesystem;
 
 inline std::string u32_to_str(uint32_t val) {
     uint32_t net_val = htonl(val);
@@ -34,7 +37,7 @@ struct Torrent {
         std::vector<file> files;         // If only single file present, files.size = 0
     } info;
 
-    Torrent(std::string filename);
+    Torrent(std::wstring filename);
     ~Torrent() = default;
 };
 
@@ -46,6 +49,7 @@ struct PieceStatus {
 };
 
 struct TorrentState {
+    bool files_built = false;
     std::mutex pieces_mutex;
     const Torrent &torrent;
     std::string client_id;
@@ -53,6 +57,7 @@ struct TorrentState {
 
     TorrentState(const Torrent &t);
     int next_missing_piece() const;
+    int next_missing_piece(const std::vector<bool> &peer_bitfield) const;
     bool is_done() const;
 };
 
@@ -124,11 +129,14 @@ struct PeerConnection {
     void send_unchoke();
     void handle_piece(const Message& msg);
     void run();
+    void request_next_piece();
 };
 
 std::vector<PeerConnection> connect_to_peers(const std::vector<Peer> &peers,
                                                           TorrentState &ts, uint16_t conn_count);
 
 void print_torrent(const Torrent &torrent);
+
+bool try_build_files(TorrentState& ts);
 
 #endif // INCLUDE_TORRENT_HPP_

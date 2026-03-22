@@ -11,5 +11,6 @@
 std::string sha1(const std::string &input);
 std::string sha1_hex(const std::string & input);
 std::string sha1(const std::vector<uint8_t>& input);
+std::string sha1_hex(const std::vector<uint8_t>& input);
 
 #endif // INCLUDE_SHA1_HPP_

@@ -25,16 +25,14 @@ void download_from_peers(const std::vector<Peer> &peers, TorrentState &ts,
         }
     }
 
-    for (auto &t : threads) t.join();
+    for (auto &t : threads)
+        t.join();
 }
 int main() {
     spdlog::set_level(spdlog::level::debug);
-    auto torrent_file = std::ifstream("test/Adobe Photoshop 2021 22.4.1 [2021,Multi Ru] "
-                                      "RePack m0nkrus [rutracker-5970995].torrent");
-    BencodeVal parsed_torrent_file = read_bencode(torrent_file);
+    Torrent torrent(L"test/Высокая кухня - Похлебкин В. В. - ЧАЙ [2007, PDF, RUS] "
+                    L"[rutracker-605222].torrent");
 
-    Torrent torrent("test/Adobe Photoshop 2021 22.4.1 [2021,Multi Ru] "
-                    "RePack m0nkrus [rutracker-5970995].torrent");
     print_torrent(torrent);
     TorrentState torrent_state = TorrentState(torrent);
 

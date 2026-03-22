@@ -4,3 +4,5 @@ build.bat
 \net
 .clang-format
 build.py
+*.tmp
+todo.md

@@ -1,5 +1,6 @@
 #include "torrent.hpp"
 #include "spdlog/spdlog.h"
+#undef min
 
 // ─── Peer ────────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,17 @@ TorrentState::TorrentState(const Torrent &t) : torrent(t) {
                   t.total_length);
 }
 
+// Ищет следующий Missing кусок который есть у пира
+int TorrentState::next_missing_piece(const std::vector<bool> &peer_bitfield) const {
+    for (size_t i = 0; i < pieces.size(); i++) {
+        if (pieces[i].state == PieceStatus::State::Missing && i < peer_bitfield.size() &&
+            peer_bitfield[i])
+            return (int)i;
+    }
+    return -1;
+}
+
+// Оставляем старую версию для совместимости
 int TorrentState::next_missing_piece() const {
     for (size_t i = 0; i < pieces.size(); i++)
         if (pieces[i].state == PieceStatus::State::Missing)
@@ -79,10 +91,8 @@ std::string find_info_hash(std::istream &file) {
 
 // ─── Torrent ─────────────────────────────────────────────────────────────────
 
-Torrent::Torrent(std::string filename) {
-    spdlog::info("Loading torrent file: {}", filename);
-
-    auto file = std::ifstream(filename, std::ios::binary);
+Torrent::Torrent(std::wstring filename) {
+    auto file = std::ifstream(fs::path(filename), std::ios::binary);
     BencodeVal data = read_bencode(file);
     file.close();
 
@@ -95,7 +105,7 @@ Torrent::Torrent(std::string filename) {
     announce_url = dict.at("announce").get_str();
     spdlog::debug("Announce URL: {}", announce_url);
 
-    auto f = std::ifstream(filename, std::ios::binary);
+    auto f = std::ifstream(fs::path(filename), std::ios::binary);
     info_hash = find_info_hash(f);
     spdlog::info("info_hash: {}", info_hash);
 
@@ -213,16 +223,10 @@ Message PeerConnection::recv_message() {
         int r = 0;
         while (received < n) {
             r = recv(conn.sock, inbuf.data() + received, n - received, 0);
-            if (r == 0) {
-                throw std::runtime_error("Connection closed"); // пир закрыл соединение
-            }
-            if (r < 0) {
-                int err = WSAGetLastError();
-                // if (err == WSAETIMEDOUT) {
-                //     continue; // просто таймаут, пробуем ещё раз
-                // }
+            if (r == 0)
                 throw std::runtime_error("Connection closed");
-            }
+            if (r < 0)
+                throw std::runtime_error("Connection closed");
             received += r;
         }
         return inbuf;
@@ -288,8 +292,8 @@ void PeerConnection::send_interested() {
     try {
         conn.send_all(buf);
     } catch (const std::exception &e) {
-        spdlog::error("[{}] Send interested failed! Exception: {}", peer.str(), e.what());
-    };
+        spdlog::error("[{}] Send interested failed: {}", peer.str(), e.what());
+    }
 }
 
 void PeerConnection::send_not_interested() {
@@ -299,9 +303,8 @@ void PeerConnection::send_not_interested() {
     try {
         conn.send_all(buf);
     } catch (const std::exception &e) {
-        spdlog::error("[{}] Send not interested failed! Exception: {}", peer.str(),
-                      e.what());
-    };
+        spdlog::error("[{}] Send not interested failed: {}", peer.str(), e.what());
+    }
 }
 
 void PeerConnection::send_keep_alive() {
@@ -310,8 +313,8 @@ void PeerConnection::send_keep_alive() {
     try {
         conn.send_all(buf);
     } catch (const std::exception &e) {
-        spdlog::error("[{}] Send keep alive failed! Exception: {}", peer.str(), e.what());
-    };
+        spdlog::error("[{}] Send keep alive failed: {}", peer.str(), e.what());
+    }
 }
 
 void PeerConnection::send_request(uint32_t index, uint32_t begin, uint32_t length) {
@@ -324,14 +327,13 @@ void PeerConnection::send_request(uint32_t index, uint32_t begin, uint32_t lengt
     req += u32_to_str(length);
     conn.send_all(req);
 }
+
 void PeerConnection::send_bitfield() {
     size_t num_pieces = torrent_state.torrent.info.pieces.size();
-    size_t num_bytes = (num_pieces + 7) / 8; // округление вверх
-
-    std::string payload(num_bytes, '\0'); // все нули — нет ни одного куска
-
-    std::string msg = u32_to_str(1 + num_bytes); // length = 1 (id) + num_bytes
-    msg += static_cast<char>(5);                 // id = 5 (bitfield)
+    size_t num_bytes = (num_pieces + 7) / 8;
+    std::string payload(num_bytes, '\0');
+    std::string msg = u32_to_str(1 + num_bytes);
+    msg += static_cast<char>(5);
     msg += payload;
     conn.send_all(msg);
     spdlog::debug("[{}] Sent bitfield ({} bytes)", peer.str(), num_bytes);
@@ -344,20 +346,43 @@ void PeerConnection::send_unchoke() {
     try {
         conn.send_all(buf);
     } catch (const std::exception &e) {
-        spdlog::error("[{}] Send not interested failed! Exception: {}", peer.str(),
-                      e.what());
-    };
+        spdlog::error("[{}] Send unchoke failed: {}", peer.str(), e.what());
+    }
+}
+
+void PeerConnection::request_next_piece() {
+    int piece = torrent_state.next_missing_piece(bitfield);
+    if (piece < 0)
+        return; // нечего качать у этого пира
+    {
+        std::lock_guard<std::mutex> lock(torrent_state.pieces_mutex);
+        // ещё раз проверяем под мьютексом — другой поток мог занять кусок
+        if (torrent_state.pieces[piece].state != PieceStatus::State::Missing)
+            return;
+        torrent_state.pieces[piece].state = PieceStatus::State::Downloading;
+    }
+    send_request(piece, 0, 16384);
 }
 
 void PeerConnection::handle_piece(const Message &msg) {
     std::lock_guard<std::mutex> lock(torrent_state.pieces_mutex);
 
+    if (msg.index >= torrent_state.pieces.size())
+        return;
+
     auto &piece = torrent_state.pieces[msg.index];
-    piece.state = PieceStatus::State::Downloading;
+
+    // если кусок уже Done (другой пир скачал) — игнорируем
+    if (piece.state == PieceStatus::State::Done)
+        return;
 
     if (piece.buffer.empty()) {
         piece.buffer.resize(piece.total_size);
+        piece.state = PieceStatus::State::Downloading;
     }
+
+    if (msg.begin + msg.data.size() > piece.buffer.size())
+        return; // защита от выхода за границу
 
     std::copy(msg.data.begin(), msg.data.end(), piece.buffer.begin() + msg.begin);
     piece.downloaded += msg.data.size();
@@ -370,12 +395,13 @@ void PeerConnection::handle_piece(const Message &msg) {
                                   std::to_string(msg.index) + ".tmp",
                               std::ios::binary);
             tmp.write(reinterpret_cast<const char *>(piece.buffer.data()),
-                      piece.buffer.size() * sizeof(uint8_t));
+                      piece.buffer.size());
             piece.state = PieceStatus::State::Done;
-            piece.buffer.clear(); // если понадобится отдача, откроем файл,
-                                  // и прочитаем оттуда
+            piece.buffer.clear();
+            spdlog::info("[{}] Piece {} done", peer.str(), msg.index);
         } else {
-            spdlog::error("[{}] Wrong SHA1 checksum for piece {}", peer.str(), msg.index);
+            spdlog::error("[{}] Wrong SHA1 for piece {}, re-downloading", peer.str(),
+                          msg.index);
             piece.state = PieceStatus::State::Missing;
             piece.downloaded = 0;
             piece.buffer.clear();
@@ -393,37 +419,34 @@ void PeerConnection::run() {
     }
 
     spdlog::info("[{}] Starting download loop", peer.str());
-    // send_bitfield();
     send_interested();
+
     while (!torrent_state.is_done()) {
         Message msg = recv_message();
         spdlog::debug("[{}] Got message type={}", peer.str(), (int)msg.type);
 
         switch (msg.type) {
         case MessageType::KeepAlive:
-            spdlog::info("[{}] KeepAlive", peer.str());
             send_keep_alive();
             break;
+
         case MessageType::Choke:
             peer_choking = true;
             spdlog::info("[{}] Choked", peer.str());
             break;
+
         case MessageType::Unchoke:
             peer_choking = false;
             spdlog::info("[{}] Unchoked", peer.str());
-            if (am_interested) {
-                int piece = torrent_state.next_missing_piece();
-                if (piece >= 0 && piece < (int)bitfield.size() && bitfield[piece]) {
-                    send_request(piece, 0, 16384);
-                }
-            }
+            if (am_interested)
+                request_next_piece();
             break;
+
         case MessageType::Have:
-            if (msg.index < bitfield.size()) {
-                spdlog::info("[{}] Got have", peer.str());
+            if (msg.index < bitfield.size())
                 bitfield[msg.index] = true;
-            }
             break;
+
         case MessageType::Bitfield:
             bitfield.clear();
             bitfield.reserve(msg.data.size() * 8);
@@ -431,31 +454,53 @@ void PeerConnection::run() {
                 for (int bit = 7; bit >= 0; bit--)
                     bitfield.push_back((msg.data[i] >> bit) & 1);
             spdlog::info("[{}] Got bitfield", peer.str());
-            send_interested();
-            am_interested = true;
-            break;
-        case MessageType::Piece:
-            spdlog::info("[{}] Got piece", peer.str());
-            handle_piece(msg);
-
-            if (torrent_state.pieces[msg.index].state != PieceStatus::State::Done) {
-                send_request(msg.index, torrent_state.pieces[msg.index].downloaded,
-                             16384);
-            } else {
-                send_request(msg.index + 1, 0, 16384);
+            if (!am_interested) {
+                send_interested();
+                am_interested = true;
             }
             break;
-        default:
-            spdlog::info("[{}] Got msg: {}", peer.str(), (uint8_t)msg.type);
+
+        case MessageType::Piece: {
+            bool was_done =
+                (torrent_state.pieces[msg.index].state == PieceStatus::State::Done);
+            handle_piece(msg);
+            bool piece_done =
+                (torrent_state.pieces[msg.index].state == PieceStatus::State::Done);
+
+            if (!peer_choking) {
+                if (!piece_done && !was_done) {
+                    // кусок не завершён — запрашиваем следующий блок
+                    uint32_t next_begin = torrent_state.pieces[msg.index].downloaded;
+                    uint32_t remain =
+                        torrent_state.pieces[msg.index].total_size - next_begin;
+                    uint32_t block_size = std::min(remain, (uint32_t)16384);
+                    if (block_size > 0)
+                        send_request(msg.index, next_begin, block_size);
+                } else {
+                    // кусок завершён — берём следующий
+                    request_next_piece();
+                }
+            }
             break;
         }
-        // if (!peer_choking) {
-        //     spdlog::info("Sending request");
 
-        //     // TODO ask for next piece
-        // }
+        default:
+            spdlog::debug("[{}] Got unknown msg: {}", peer.str(), (uint8_t)msg.type);
+            break;
+        }
     }
+
     spdlog::info("[{}] Download complete", peer.str());
+
+    // только один поток строит файлы
+    {
+        std::lock_guard<std::mutex> lock(torrent_state.pieces_mutex);
+        if (torrent_state.files_built)
+            return;
+        torrent_state.files_built = true;
+    }
+    if (!try_build_files(torrent_state))
+        spdlog::error("Could not build files!");
 }
 
 std::vector<PeerConnection> connect_to_peers(const std::vector<Peer> &peers,
@@ -516,4 +561,130 @@ void print_torrent(const Torrent &t) {
             std::cout << "\n";
         }
     }
+}
+
+// ─── try_build_files ─────────────────────────────────────────────────────────
+
+bool try_build_files(TorrentState &ts) {
+    if (!ts.is_done()) {
+        spdlog::error("Unable to build files! TorrentState of {} contains undone pieces",
+                      ts.torrent.info_hash);
+        return false;
+    }
+
+    std::vector<fs::path> piece_files(ts.pieces.size());
+    for (size_t i = 0; i < ts.pieces.size(); i++)
+        piece_files[i] =
+            fs::path(ts.torrent.info_hash + "_" + std::to_string(i) + ".tmp");
+
+    bool all_exists = true;
+    for (size_t i = 0; i < ts.pieces.size(); i++) {
+        if (!fs::exists(piece_files[i])) {
+            spdlog::error("Missing piece {}!", i);
+            ts.pieces[i].state = PieceStatus::State::Missing;
+            all_exists = false;
+        }
+    }
+    if (!all_exists)
+        return false;
+
+    bool correct_hashes = true;
+    for (size_t i = 0; i < ts.pieces.size(); i++) {
+        std::ifstream f(piece_files[i], std::ios::binary);
+        std::vector<uint8_t> bytes(fs::file_size(piece_files[i]));
+        f.read(reinterpret_cast<char *>(bytes.data()), bytes.size());
+
+        std::string hash = sha1(bytes);
+        if (hash != ts.torrent.info.pieces[i]) {
+            spdlog::error("Wrong hash for piece {}! {} instead of {}", i, sha1_hex(bytes),
+                          ts.torrent.info_hash);
+            correct_hashes = false;
+        }
+    }
+    if (!correct_hashes)
+        return false;
+
+    // single-file
+    if (ts.torrent.info.files.empty()) {
+        std::ofstream out(ts.torrent.info.name, std::ios::binary);
+        for (size_t i = 0; i < ts.pieces.size(); i++) {
+            std::ifstream piece(piece_files[i], std::ios::binary);
+            std::vector<char> buf(ts.pieces[i].total_size);
+            piece.read(buf.data(), buf.size());
+            out.write(buf.data(), buf.size());
+        }
+        spdlog::info("Built single-file: {}", ts.torrent.info.name);
+        return true;
+    }
+
+    // multi-file
+    std::vector<std::pair<fs::path, size_t>> output_files(ts.torrent.info.files.size());
+    for (size_t i = 0; i < output_files.size(); i++) {
+        output_files[i] = {fs::path(ts.torrent.info.files[i].path.back()),
+                           ts.torrent.info.files[i].length};
+        std::ofstream(output_files[i].first) << "";
+    }
+
+    size_t piece_index = 0;
+    size_t cur_file = 0;
+    size_t piece_remain = ts.pieces[piece_index].total_size;
+    size_t cur_file_remain = ts.torrent.info.files[cur_file].length;
+
+    std::ofstream file(output_files[cur_file].first, std::ios::binary);
+    std::ifstream piece(piece_files[piece_index], std::ios::binary);
+
+    while (piece_index < ts.pieces.size() && cur_file < output_files.size()) {
+        if (cur_file_remain >= piece_remain) {
+            std::vector<char> buf(piece_remain);
+            piece.read(buf.data(), buf.size());
+            file.write(buf.data(), buf.size());
+            cur_file_remain -= piece_remain;
+
+            piece_index++;
+            if (piece_index >= ts.pieces.size())
+                break;
+            piece_remain = ts.pieces[piece_index].total_size;
+            piece.close();
+            piece = std::ifstream(piece_files[piece_index], std::ios::binary);
+
+            if (cur_file_remain == 0) {
+                cur_file++;
+                if (cur_file >= output_files.size())
+                    break;
+                file.close();
+                file = std::ofstream(output_files[cur_file].first, std::ios::binary);
+                cur_file_remain = ts.torrent.info.files[cur_file].length;
+            }
+        } else {
+            std::vector<char> buf(piece_remain);
+            piece.read(buf.data(), buf.size());
+
+            size_t begin = 0;
+            while (begin < buf.size()) {
+                size_t to_write = std::min(cur_file_remain, buf.size() - begin);
+                file.write(buf.data() + begin, to_write);
+                begin += to_write;
+                cur_file_remain -= to_write;
+
+                if (cur_file_remain == 0) {
+                    cur_file++;
+                    if (cur_file >= output_files.size())
+                        break;
+                    file.close();
+                    file = std::ofstream(output_files[cur_file].first, std::ios::binary);
+                    cur_file_remain = ts.torrent.info.files[cur_file].length;
+                }
+            }
+
+            piece_index++;
+            if (piece_index >= ts.pieces.size())
+                break;
+            piece_remain = ts.pieces[piece_index].total_size;
+            piece.close();
+            piece = std::ifstream(piece_files[piece_index], std::ios::binary);
+        }
+    }
+
+    spdlog::info("Built {} files", output_files.size());
+    return true;
 }
