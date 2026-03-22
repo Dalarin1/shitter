@@ -72,7 +72,7 @@ std::string find_info_hash(std::istream &file) {
     BencodeVal info_val = read_bencode(ss);
     std::streampos end = ss.tellg();
     std::string info_raw = raw.substr(pos, (size_t)end - (size_t)start);
-    std::string hash = sha1(info_raw);
+    std::string hash = sha1_hex(info_raw);
     spdlog::debug("Computed info_hash: {}", hash);
     return hash;
 }
@@ -336,6 +336,7 @@ void PeerConnection::send_bitfield() {
     conn.send_all(msg);
     spdlog::debug("[{}] Sent bitfield ({} bytes)", peer.str(), num_bytes);
 }
+
 void PeerConnection::send_unchoke() {
     spdlog::debug("[{}] Send unchoke", peer.str());
     std::string buf = u32_to_str(1);
@@ -347,6 +348,41 @@ void PeerConnection::send_unchoke() {
                       e.what());
     };
 }
+
+void PeerConnection::handle_piece(const Message &msg) {
+    std::lock_guard<std::mutex> lock(torrent_state.pieces_mutex);
+
+    auto &piece = torrent_state.pieces[msg.index];
+    piece.state = PieceStatus::State::Downloading;
+
+    if (piece.buffer.empty()) {
+        piece.buffer.resize(piece.total_size);
+    }
+
+    std::copy(msg.data.begin(), msg.data.end(), piece.buffer.begin() + msg.begin);
+    piece.downloaded += msg.data.size();
+
+    if (piece.downloaded >= piece.total_size) {
+        std::string hashsum = sha1(piece.buffer);
+
+        if (hashsum == torrent_state.torrent.info.pieces.at(msg.index)) {
+            std::ofstream tmp(torrent_state.torrent.info_hash + "_" +
+                                  std::to_string(msg.index) + ".tmp",
+                              std::ios::binary);
+            tmp.write(reinterpret_cast<const char *>(piece.buffer.data()),
+                      piece.buffer.size() * sizeof(uint8_t));
+            piece.state = PieceStatus::State::Done;
+            piece.buffer.clear(); // если понадобится отдача, откроем файл,
+                                  // и прочитаем оттуда
+        } else {
+            spdlog::error("[{}] Wrong SHA1 checksum for piece {}", peer.str(), msg.index);
+            piece.state = PieceStatus::State::Missing;
+            piece.downloaded = 0;
+            piece.buffer.clear();
+        }
+    }
+}
+
 void PeerConnection::run() {
     spdlog::debug("[{}] Run process started; Handshook = {}", peer.str(), handshook);
     if (!handshook) {
@@ -362,6 +398,7 @@ void PeerConnection::run() {
     while (!torrent_state.is_done()) {
         Message msg = recv_message();
         spdlog::debug("[{}] Got message type={}", peer.str(), (int)msg.type);
+
         switch (msg.type) {
         case MessageType::KeepAlive:
             spdlog::info("[{}] KeepAlive", peer.str());
@@ -399,14 +436,24 @@ void PeerConnection::run() {
             break;
         case MessageType::Piece:
             spdlog::info("[{}] Got piece", peer.str());
+            handle_piece(msg);
+
+            if (torrent_state.pieces[msg.index].state != PieceStatus::State::Done) {
+                send_request(msg.index, torrent_state.pieces[msg.index].downloaded,
+                             16384);
+            } else {
+                send_request(msg.index + 1, 0, 16384);
+            }
             break;
         default:
             spdlog::info("[{}] Got msg: {}", peer.str(), (uint8_t)msg.type);
             break;
         }
-        if (!peer_choking) {
-            spdlog::info("Sending request");
-        }
+        // if (!peer_choking) {
+        //     spdlog::info("Sending request");
+
+        //     // TODO ask for next piece
+        // }
     }
     spdlog::info("[{}] Download complete", peer.str());
 }

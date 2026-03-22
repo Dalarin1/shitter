@@ -6,6 +6,7 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <mutex>
 #include "bencode.hpp"
 #include "protocol.hpp"
 #include "sha1.hpp"
@@ -45,6 +46,7 @@ struct PieceStatus {
 };
 
 struct TorrentState {
+    std::mutex pieces_mutex;
     const Torrent &torrent;
     std::string client_id;
     std::vector<PieceStatus> pieces;
@@ -118,13 +120,12 @@ struct PeerConnection {
     void send_keep_alive();
     void send_request(uint32_t index, uint32_t begin, uint32_t length);
     void send_bitfield();
-
     void send_have(uint32_t index);
     void send_unchoke();
+    void handle_piece(const Message& msg);
     void run();
 };
 
-// TODO
 std::vector<PeerConnection> connect_to_peers(const std::vector<Peer> &peers,
                                                           TorrentState &ts, uint16_t conn_count);
 
