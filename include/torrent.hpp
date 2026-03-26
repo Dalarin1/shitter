@@ -34,7 +34,7 @@ struct Torrent {
         std::string name;                // Name to save the file/directory as.
         uint64_t piece_length;           // Number of bytes in each piece
         std::vector<std::string> pieces; // Each pieces[i] represents SHA1 of _i_th piece
-        int64_t length;                 // Length of single file; -1 if multiple files
+        uint64_t length;                 // Length of single file; -1 if multiple files
         std::vector<file> files;         // If only single file present, files.size = 0
     } info;
 

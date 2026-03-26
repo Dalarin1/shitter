@@ -463,7 +463,7 @@ void PeerConnection::run() {
         case MessageType::Piece: {
             bool was_done =
                 (torrent_state.pieces[msg.index].state == PieceStatus::State::Done);
-            handle_piece(msg);
+            handle_piece_v2(msg);
             bool piece_done =
                 (torrent_state.pieces[msg.index].state == PieceStatus::State::Done);
 
@@ -709,10 +709,10 @@ void TorrentState::init_torfiles(fs::path where) {
 
     // multi-file
     if (torrent.info.length == -1) {
-        fs::path file_path = where;
+
         size_t offset = 0;
         for (auto &file : torrent.info.files) {
-
+            fs::path file_path = where;
             for (auto &entry : file.path) {
                 file_path /= entry;
             }
@@ -720,11 +720,11 @@ void TorrentState::init_torfiles(fs::path where) {
             auto tf = std::make_unique<TorFile>();
             tf->descriptor =
                 std::fstream(file_path, std::ios::in | std::ios::out | std::ios::binary |
-                                            std::ios::trunc)
-                << "";
+                                            std::ios::trunc);
             fs::resize_file(file_path, file.length);
             tf->global_offset = offset;
             tf->path = file_path;
+            tf->size = file.length;
             offset += file.length;
 
             torfiles.emplace(std::move(tf));
@@ -739,6 +739,7 @@ void TorrentState::init_torfiles(fs::path where) {
     fs::resize_file(file_path, torrent.info.length);
     tf->global_offset = 0;
     tf->path = file_path;
+    tf->size = torrent.info.length;
     torfiles.emplace(std::move(tf));
 }
 
@@ -804,7 +805,8 @@ void PeerConnection::handle_piece_v2(const Message &msg) {
         {
             std::lock_guard<std::mutex> flock(tf.mut); // мьютекс только на этот файл
             tf.descriptor.seekp(file_offset, std::ios::beg);
-            spdlog::info("Writing {} bytes in {}, pos: {}", completed_buffer.size(), tf.path.string(), file_offset);
+            spdlog::info("Writing {} bytes in {}, pos: {}", completed_buffer.size(),
+                         tf.path.string(), file_offset);
             tf.descriptor.write(
                 reinterpret_cast<const char *>(completed_buffer.data() + buf_offset),
                 to_write);

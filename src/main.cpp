@@ -36,9 +36,9 @@ int main() {
 
     print_torrent(torrent);
     TorrentState torrent_state = TorrentState(torrent);
-    // if(!torrent_state.preallocate_files(fs::current_path())){
-    //     return 1;
-    // }
+    if(!torrent_state.preallocate_files(fs::current_path())){
+        return 1;
+    }
 
     std::wstring tracker_url_wstring =
         std::wstring(torrent.announce_url.begin(), torrent.announce_url.end());
