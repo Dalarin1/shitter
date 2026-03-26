@@ -28,6 +28,7 @@ void download_from_peers(const std::vector<Peer> &peers, TorrentState &ts,
     for (auto &t : threads)
         t.join();
 }
+
 int main() {
     spdlog::set_level(spdlog::level::debug);
     Torrent torrent(L"test/Высокая кухня - Похлебкин В. В. - ЧАЙ [2007, PDF, RUS] "
@@ -35,6 +36,9 @@ int main() {
 
     print_torrent(torrent);
     TorrentState torrent_state = TorrentState(torrent);
+    // if(!torrent_state.preallocate_files(fs::current_path())){
+    //     return 1;
+    // }
 
     std::wstring tracker_url_wstring =
         std::wstring(torrent.announce_url.begin(), torrent.announce_url.end());
@@ -73,6 +77,6 @@ int main() {
     // } catch (const std::exception &e) {
     //     spdlog::error("run() error: {}", e.what());
     // }
-    download_from_peers(peers, torrent_state, 20);
+    download_from_peers(peers, torrent_state, 10);
     return 0;
 }

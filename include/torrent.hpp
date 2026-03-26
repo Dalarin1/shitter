@@ -7,6 +7,7 @@
 #include <fstream>
 #include <sstream>
 #include <mutex>
+#include <set>
 #include <filesystem>
 #include "bencode.hpp"
 #include "protocol.hpp"
@@ -33,7 +34,7 @@ struct Torrent {
         std::string name;                // Name to save the file/directory as.
         uint64_t piece_length;           // Number of bytes in each piece
         std::vector<std::string> pieces; // Each pieces[i] represents SHA1 of _i_th piece
-        uint64_t length;                 // Length of single file; -1 if multiple files
+        int64_t length;                 // Length of single file; -1 if multiple files
         std::vector<file> files;         // If only single file present, files.size = 0
     } info;
 
@@ -48,17 +49,40 @@ struct PieceStatus {
     uint32_t total_size = 0;
 };
 
+struct TorFile {
+    fs::path path;
+    size_t size;
+    size_t global_offset; // смещение начала файла в общем потоке байт торрента
+    std::fstream descriptor;
+    std::mutex mut;
+
+    // не копируемый и не перемещаемый из-за mutex и fstream
+    TorFile() = default;
+    TorFile(const TorFile &) = delete;
+    TorFile &operator=(const TorFile &) = delete;
+    TorFile(TorFile &&) = delete;
+    TorFile &operator=(TorFile &&) = delete;
+};
+
+
 struct TorrentState {
     bool files_built = false;
     std::mutex pieces_mutex;
     const Torrent &torrent;
     std::string client_id;
     std::vector<PieceStatus> pieces;
+    
+    std::set<std::unique_ptr<TorFile>> torfiles;
 
     TorrentState(const Torrent &t);
     int next_missing_piece() const;
     int next_missing_piece(const std::vector<bool> &peer_bitfield) const;
     bool is_done() const;
+    
+    bool preallocate_files(fs::path where);
+
+private:
+    void init_torfiles(fs::path where);
 };
 
 enum class MessageType : uint8_t {
@@ -128,6 +152,7 @@ struct PeerConnection {
     void send_have(uint32_t index);
     void send_unchoke();
     void handle_piece(const Message& msg);
+    void handle_piece_v2(const Message& msg);
     void run();
     void request_next_piece();
 };
