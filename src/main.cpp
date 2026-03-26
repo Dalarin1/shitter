@@ -36,7 +36,8 @@ int main() {
 
     print_torrent(torrent);
     TorrentState torrent_state = TorrentState(torrent);
-    if(!torrent_state.preallocate_files(fs::current_path())){
+
+    if (!torrent_state.preallocate_files(fs::current_path())) {
         return 1;
     }
 

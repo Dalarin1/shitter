@@ -43,10 +43,15 @@ struct Torrent {
 };
 
 struct PieceStatus {
-    enum class State { Missing, Downloading, Done } state = State::Missing;
+    enum class State: uint8_t { Missing, Downloading, Done } state = State::Missing;
     std::vector<uint8_t> buffer;
     uint32_t downloaded = 0;
     uint32_t total_size = 0;
+
+    bool operator==(const PieceStatus &other) const {
+        return state == other.state && buffer == other.buffer &&
+               downloaded == other.downloaded && total_size == other.total_size;
+    }
 };
 
 struct TorFile {
@@ -64,24 +69,26 @@ struct TorFile {
     TorFile &operator=(TorFile &&) = delete;
 };
 
-
 struct TorrentState {
     bool files_built = false;
     std::mutex pieces_mutex;
     const Torrent &torrent;
     std::string client_id;
     std::vector<PieceStatus> pieces;
-    
+
     std::set<std::unique_ptr<TorFile>> torfiles;
 
     TorrentState(const Torrent &t);
     int next_missing_piece() const;
     int next_missing_piece(const std::vector<bool> &peer_bitfield) const;
     bool is_done() const;
-    
-    bool preallocate_files(fs::path where);
 
-private:
+    bool preallocate_files(fs::path where);
+    // сохранение и загрузка из файла
+    bool try_save();
+    bool try_load(fs::path file);
+
+  private:
     void init_torfiles(fs::path where);
 };
 
@@ -135,7 +142,7 @@ struct PeerConnection {
     std::vector<bool> bitfield;
 
     PeerConnection() = delete;
-    PeerConnection(PeerConnection&& other) noexcept;
+    PeerConnection(PeerConnection &&other) noexcept;
     PeerConnection(Peer peer, TorrentState &ts);
 
     void send_handshake();
@@ -151,17 +158,24 @@ struct PeerConnection {
     void send_bitfield();
     void send_have(uint32_t index);
     void send_unchoke();
-    void handle_piece(const Message& msg);
-    void handle_piece_v2(const Message& msg);
+    void handle_piece(const Message &msg);
+    void handle_piece_v2(const Message &msg);
     void run();
     void request_next_piece();
 };
 
 std::vector<PeerConnection> connect_to_peers(const std::vector<Peer> &peers,
-                                                          TorrentState &ts, uint16_t conn_count);
+                                             TorrentState &ts, uint16_t conn_count);
 
 void print_torrent(const Torrent &torrent);
 
-bool try_build_files(TorrentState& ts);
+#if 0
+// Управляет коннектами, хранит список известных пиров, время от времени проверят список
+// на новых рабочих пиров
+struct PeerBoss {
+    std::set<Peer> peers;
+    std::vector<std::unique_ptr<PeerConnection>> connects;  
+};
+#endif
 
 #endif // INCLUDE_TORRENT_HPP_

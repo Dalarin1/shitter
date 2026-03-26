@@ -51,7 +51,8 @@ int TorrentState::next_missing_piece(const std::vector<bool> &peer_bitfield) con
     for (size_t i = 0; i < pieces.size(); i++) {
         if (pieces[i].state == PieceStatus::State::Missing && i < peer_bitfield.size() &&
             peer_bitfield[i])
-            return (int)i;
+            spdlog::debug("Thread {} requesting piece {}", std::hash<std::thread::id>{}(std::this_thread::get_id()), i);
+        return (int)i;
     }
     return -1;
 }
@@ -491,16 +492,6 @@ void PeerConnection::run() {
     }
 
     spdlog::info("[{}] Download complete", peer.str());
-
-    // только один поток строит файлы
-    {
-        std::lock_guard<std::mutex> lock(torrent_state.pieces_mutex);
-        if (torrent_state.files_built)
-            return;
-        torrent_state.files_built = true;
-    }
-    if (!try_build_files(torrent_state))
-        spdlog::error("Could not build files!");
 }
 
 std::vector<PeerConnection> connect_to_peers(const std::vector<Peer> &peers,
@@ -561,132 +552,6 @@ void print_torrent(const Torrent &t) {
             std::cout << "\n";
         }
     }
-}
-
-// ─── try_build_files ─────────────────────────────────────────────────────────
-
-bool try_build_files(TorrentState &ts) {
-    if (!ts.is_done()) {
-        spdlog::error("Unable to build files! TorrentState of {} contains undone pieces",
-                      ts.torrent.info_hash);
-        return false;
-    }
-
-    std::vector<fs::path> piece_files(ts.pieces.size());
-    for (size_t i = 0; i < ts.pieces.size(); i++)
-        piece_files[i] =
-            fs::path(ts.torrent.info_hash + "_" + std::to_string(i) + ".tmp");
-
-    bool all_exists = true;
-    for (size_t i = 0; i < ts.pieces.size(); i++) {
-        if (!fs::exists(piece_files[i])) {
-            spdlog::error("Missing piece {}!", i);
-            ts.pieces[i].state = PieceStatus::State::Missing;
-            all_exists = false;
-        }
-    }
-    if (!all_exists)
-        return false;
-
-    bool correct_hashes = true;
-    for (size_t i = 0; i < ts.pieces.size(); i++) {
-        std::ifstream f(piece_files[i], std::ios::binary);
-        std::vector<uint8_t> bytes(fs::file_size(piece_files[i]));
-        f.read(reinterpret_cast<char *>(bytes.data()), bytes.size());
-
-        std::string hash = sha1(bytes);
-        if (hash != ts.torrent.info.pieces[i]) {
-            spdlog::error("Wrong hash for piece {}! {} instead of {}", i, sha1_hex(bytes),
-                          ts.torrent.info_hash);
-            correct_hashes = false;
-        }
-    }
-    if (!correct_hashes)
-        return false;
-
-    // single-file
-    if (ts.torrent.info.files.empty()) {
-        std::ofstream out(ts.torrent.info.name, std::ios::binary);
-        for (size_t i = 0; i < ts.pieces.size(); i++) {
-            std::ifstream piece(piece_files[i], std::ios::binary);
-            std::vector<char> buf(ts.pieces[i].total_size);
-            piece.read(buf.data(), buf.size());
-            out.write(buf.data(), buf.size());
-        }
-        spdlog::info("Built single-file: {}", ts.torrent.info.name);
-        return true;
-    }
-
-    // multi-file
-    std::vector<std::pair<fs::path, size_t>> output_files(ts.torrent.info.files.size());
-    for (size_t i = 0; i < output_files.size(); i++) {
-        output_files[i] = {fs::path(ts.torrent.info.files[i].path.back()),
-                           ts.torrent.info.files[i].length};
-        std::ofstream(output_files[i].first) << "";
-    }
-
-    size_t piece_index = 0;
-    size_t cur_file = 0;
-    size_t piece_remain = ts.pieces[piece_index].total_size;
-    size_t cur_file_remain = ts.torrent.info.files[cur_file].length;
-
-    std::ofstream file(output_files[cur_file].first, std::ios::binary);
-    std::ifstream piece(piece_files[piece_index], std::ios::binary);
-
-    while (piece_index < ts.pieces.size() && cur_file < output_files.size()) {
-        if (cur_file_remain >= piece_remain) {
-            std::vector<char> buf(piece_remain);
-            piece.read(buf.data(), buf.size());
-            file.write(buf.data(), buf.size());
-            cur_file_remain -= piece_remain;
-
-            piece_index++;
-            if (piece_index >= ts.pieces.size())
-                break;
-            piece_remain = ts.pieces[piece_index].total_size;
-            piece.close();
-            piece = std::ifstream(piece_files[piece_index], std::ios::binary);
-
-            if (cur_file_remain == 0) {
-                cur_file++;
-                if (cur_file >= output_files.size())
-                    break;
-                file.close();
-                file = std::ofstream(output_files[cur_file].first, std::ios::binary);
-                cur_file_remain = ts.torrent.info.files[cur_file].length;
-            }
-        } else {
-            std::vector<char> buf(piece_remain);
-            piece.read(buf.data(), buf.size());
-
-            size_t begin = 0;
-            while (begin < buf.size()) {
-                size_t to_write = std::min(cur_file_remain, buf.size() - begin);
-                file.write(buf.data() + begin, to_write);
-                begin += to_write;
-                cur_file_remain -= to_write;
-
-                if (cur_file_remain == 0) {
-                    cur_file++;
-                    if (cur_file >= output_files.size())
-                        break;
-                    file.close();
-                    file = std::ofstream(output_files[cur_file].first, std::ios::binary);
-                    cur_file_remain = ts.torrent.info.files[cur_file].length;
-                }
-            }
-
-            piece_index++;
-            if (piece_index >= ts.pieces.size())
-                break;
-            piece_remain = ts.pieces[piece_index].total_size;
-            piece.close();
-            piece = std::ifstream(piece_files[piece_index], std::ios::binary);
-        }
-    }
-
-    spdlog::info("Built {} files", output_files.size());
-    return true;
 }
 
 // ─── preallocate_files ─────────────────────────────────────────────────────────
@@ -826,4 +691,59 @@ void PeerConnection::handle_piece_v2(const Message &msg) {
     }
 
     spdlog::info("[{}] Piece {} written to disk", peer.str(), msg.index);
+}
+
+// --- try_save
+bool TorrentState::try_save() {
+    std::ofstream file(torrent.info_hash + ".shitstate", std::ios::binary);
+    if (!file) {
+        spdlog::error("Cannot save Torrent State to file! Aborting");
+        return false;
+    }
+    file.write(reinterpret_cast<const char *>(&files_built), sizeof(bool));
+    // file.write(client_id.data(), client_id.size());
+    size_t pieces_count = pieces.size();
+    file.write(reinterpret_cast<const char *>(&pieces_count), sizeof(size_t));
+    for (auto &i : pieces) {
+        file.write(reinterpret_cast<const char *>(&i.state), sizeof(PieceStatus::State));
+        size_t size = i.buffer.size();
+        file.write(reinterpret_cast<const char *>(&size), sizeof(size_t));
+        if (size > 0) {
+            file.write(reinterpret_cast<const char *>(i.buffer.data()), size);
+        }
+        file.write(reinterpret_cast<const char *>(&i.downloaded), sizeof(uint32_t));
+        file.write(reinterpret_cast<const char *>(&i.total_size), sizeof(uint32_t));
+    }
+    return true;
+    // for(auto& i : torfiles){
+    //     size_t path_size = i->path.string().size();
+    //     file.write(reinterpret_cast<const char*>(&path_size), sizeof(size_t));
+    //     file.write(i->path.string().data(), path_size);
+
+    //     file.write(reinterpret_cast<const char*>(&i->size), sizeof(size_t));
+    //     file.write(reinterpret_cast<const char*>(&i->global_offset), sizeof(size_t));
+    // }
+}
+bool TorrentState::try_load(fs::path filepath) {
+    std::ifstream file(filepath, std::ios::binary);
+    if (!file) {
+        spdlog::error("Cannot open file {}", filepath.string());
+        return false;
+    }
+    file.read(reinterpret_cast<char *>(&files_built), sizeof(bool));
+    size_t pieces_count;
+    file.read(reinterpret_cast<char *>(&pieces_count), sizeof(size_t));
+    pieces.resize(pieces_count);
+    for (size_t i = 0; i < pieces_count; i++) {
+        file.read(reinterpret_cast<char *>(&pieces[i].state), sizeof(PieceStatus::State));
+        size_t size;
+        file.read(reinterpret_cast<char *>(&size), sizeof(size_t));
+        if (size > 0) {
+            pieces[i].buffer.resize(size);
+            file.read(reinterpret_cast<char *>(pieces[i].buffer.data()), size);
+        }
+        file.read(reinterpret_cast<char *>(&pieces[i].downloaded), sizeof(uint32_t));
+        file.read(reinterpret_cast<char *>(&pieces[i].total_size), sizeof(uint32_t));
+    }
+    return true;
 }
