@@ -51,7 +51,8 @@ int TorrentState::next_missing_piece(const std::vector<bool> &peer_bitfield) con
     for (size_t i = 0; i < pieces.size(); i++) {
         if (pieces[i].state == PieceStatus::State::Missing && i < peer_bitfield.size() &&
             peer_bitfield[i])
-            spdlog::debug("Thread {} requesting piece {}", std::hash<std::thread::id>{}(std::this_thread::get_id()), i);
+            spdlog::debug("Thread {} requesting piece {}",
+                          std::hash<std::thread::id>{}(std::this_thread::get_id()), i);
         return (int)i;
     }
     return -1;
@@ -746,4 +747,31 @@ bool TorrentState::try_load(fs::path filepath) {
         file.read(reinterpret_cast<char *>(&pieces[i].total_size), sizeof(uint32_t));
     }
     return true;
+}
+
+std::vector<uint8_t> TorrentState::get_piece_by_index(size_t index) {
+    uint64_t piece_global_offset = index * torrent.info.piece_length;
+    uint64_t remain = pieces[index].total_size;
+    std::vector<uint8_t> buffer(remain);
+    uint64_t buff_offset = 0;
+    // найти первый файл, с оффсетом <= оффсета куска
+    auto it = std::find_if(torfiles.begin(), torfiles.end(),
+                           [&](const std::unique_ptr<TorFile> &tf) {
+                               return tf->global_offset <= piece_global_offset &&
+                                      tf->global_offset + tf->size > piece_global_offset;
+                           });
+    while (remain > 0 && it != torfiles.end()) {
+        TorFile &tf = **it;
+        size_t file_offset = piece_global_offset - tf.global_offset;
+        size_t to_read = std::min(remain, tf.size - file_offset);
+
+        tf.descriptor.seekp(file_offset, std::ios::beg);
+        tf.descriptor.read(reinterpret_cast<char *>(buffer.data() + buff_offset), to_read);
+
+        remain -= to_read;
+        buff_offset += to_read;
+        piece_global_offset += to_read;
+        it++;
+    }
+    return buffer;
 }

@@ -88,6 +88,9 @@ struct TorrentState {
     bool try_save();
     bool try_load(fs::path file);
 
+    // отдача
+    std::vector<uint8_t> get_piece_by_index(size_t index);
+
   private:
     void init_torfiles(fs::path where);
 };
