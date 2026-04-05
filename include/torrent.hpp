@@ -12,6 +12,7 @@
 #include "bencode.hpp"
 #include "protocol.hpp"
 #include "sha1.hpp"
+#include "file.hpp"
 
 namespace fs = std::filesystem;
 
@@ -43,7 +44,7 @@ struct Torrent {
 };
 
 struct PieceStatus {
-    enum class State: uint8_t { Missing, Downloading, Done } state = State::Missing;
+    enum class State : uint8_t { Missing, Downloading, Done } state = State::Missing;
     std::vector<uint8_t> buffer;
     uint32_t downloaded = 0;
     uint32_t total_size = 0;
@@ -58,7 +59,11 @@ struct TorFile {
     fs::path path;
     size_t size;
     size_t global_offset; // смещение начала файла в общем потоке байт торрента
+#ifdef USING_SFILE
+    SFile descriptor;
+#else
     std::fstream descriptor;
+#endif
     std::mutex mut;
 
     // не копируемый и не перемещаемый из-за mutex и fstream
@@ -69,6 +74,21 @@ struct TorFile {
     TorFile &operator=(TorFile &&) = delete;
 };
 
+struct TorFileOffsetComparer {
+    using is_transparent = void;
+
+    bool operator()(const std::unique_ptr<TorFile> &a,
+                    const std::unique_ptr<TorFile> &b) const {
+        return a->global_offset < b->global_offset;
+    }
+    bool operator()(const std::unique_ptr<TorFile> &a, uint64_t b) const {
+        return a->global_offset < b;
+    }
+    bool operator()(uint64_t a, const std::unique_ptr<TorFile> &b) const {
+        return a < b->global_offset;
+    }
+};
+
 struct TorrentState {
     bool files_built = false;
     std::mutex pieces_mutex;
@@ -76,7 +96,7 @@ struct TorrentState {
     std::string client_id;
     std::vector<PieceStatus> pieces;
 
-    std::set<std::unique_ptr<TorFile>> torfiles;
+    std::set<std::unique_ptr<TorFile>, TorFileOffsetComparer> torfiles;
 
     TorrentState(const Torrent &t);
     int next_missing_piece() const;
@@ -89,7 +109,9 @@ struct TorrentState {
     bool try_load(fs::path file);
 
     // отдача
-    std::vector<uint8_t> get_piece_by_index(size_t index);
+    std::vector<uint8_t> get_piece_by_index(size_t index) const;
+
+    uint64_t downloaded() const;
 
   private:
     void init_torfiles(fs::path where);

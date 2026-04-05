@@ -65,7 +65,8 @@ int main() {
         std::cerr << "Error: cant GET " << path << std::endl;
         return 1;
     }
-    BencodeVal resp_decoded = read_bencode(resp.data);
+    std::istringstream ыы = std::istringstream(resp.data);
+    BencodeVal resp_decoded = read_bencode(ыы);
     std::vector<Peer> peers = parse_peers(resp_decoded.get_dict().at("peers").get_str());
 
     // std::vector<PeerConnection> peepers = connect_to_peers(peers, torrent_state, 10);

@@ -45,7 +45,7 @@ struct HttpConn {
 
     struct response {
         bool success;
-        std::istringstream data;
+        std::string data;
     };
 
     HINTERNET hSession = nullptr;

@@ -274,34 +274,34 @@ HttpConn::response HttpConn::get(const std::wstring &path) {
                              WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
 
     if (!hRequest)
-        return {false, std::istringstream()};
+        return {false, ""};
 
     if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                             WINHTTP_NO_REQUEST_DATA, 0, 0, 0)) {
         spdlog::error("HttpConn: WinHttpSendRequest failed");
-        return {false, std::istringstream()};
+        return {false, ""};
     }
 
     if (!WinHttpReceiveResponse(hRequest, NULL)) {
         spdlog::error("HttpConn: WinHttpReceiveResponse failed");
-        return {false, std::istringstream()};
+        return {false, ""};
     }
 
     DWORD size = 0;
     std::string response;
     do {
         if (!WinHttpQueryDataAvailable(hRequest, &size))
-            return {false, std::istringstream()};
+            return {false, ""};
         if (!size)
             break;
 
         std::vector<char> buffer(size + 1);
         DWORD downloaded = 0;
         if (!WinHttpReadData(hRequest, buffer.data(), size, &downloaded))
-            return {false, std::istringstream()};
+            return {false, ""};
         response.append(buffer.data(), downloaded);
     } while (size > 0);
 
     spdlog::debug("HttpConn: received {} bytes", response.size());
-    return {true, std::istringstream(response)};
+    return {true, response};
 }
