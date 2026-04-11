@@ -9,7 +9,6 @@ int main(){
 
     print_torrent(torrent);
     TorrentState torrent_state = TorrentState(torrent);
-    torrent_state.preallocate_files(fs::current_path());
 
     asio::io_context ioc;
     BigBoss bb(torrent_state, ioc);

@@ -90,7 +90,8 @@ struct BigBoss {
         if (fs::exists(fs::path(ts.torrent.info_hash + ".state"))) {
             bool success = ts.try_load(fs::path(ts.torrent.info_hash + ".state"));
             if (!success) {
-                spdlog::error("State file loading failed");
+                spdlog::error("State file loading failed; Creating torrent files");
+                ts.preallocate_files(fs::current_path());
             }
         }
     }
