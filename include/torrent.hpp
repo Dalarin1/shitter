@@ -9,6 +9,7 @@
 #include <mutex>
 #include <set>
 #include <filesystem>
+#include <chrono>
 #include "bencode.hpp"
 #include "protocol.hpp"
 #include "sha1.hpp"
@@ -48,6 +49,8 @@ struct PieceStatus {
     std::vector<uint8_t> buffer;
     uint32_t downloaded = 0;
     uint32_t total_size = 0;
+
+    std::chrono::steady_clock::time_point last_interacted;
 
     bool operator==(const PieceStatus &other) const {
         return state == other.state && buffer == other.buffer &&
@@ -89,14 +92,46 @@ struct TorFileOffsetComparer {
     }
 };
 
+// TODO
+// прямо сейчас - не работает вообще, переписать надобно
+struct PieceOrderer {
+    std::vector<int> counts; 
+
+    PieceOrderer() = default;
+    PieceOrderer(int total_pieces) : counts(total_pieces){}
+
+    void add_bitfield(const std::vector<bool> &bitfield) {
+        for (size_t i = 0; i < bitfield.size(); i++)
+            counts[i]++;
+    }
+    void remove_bitfield(const std::vector<bool> &bitfield) {
+        for (size_t i = 0; i < bitfield.size(); i++)
+            counts[i]--;
+    }
+
+    int get_next(const std::vector<bool> &bitfield) {
+        int best = -1;
+        for (int i = 0; i < counts.size(); i++) {
+            if (!bitfield[i] && counts[i] > 0)
+                if (best == -1 || counts[i] < counts[best])
+                    best = i;
+        }
+        return best;
+    }
+};
+
 struct TorrentState {
     bool files_built = false;
-    std::mutex pieces_mutex;
+    
     const Torrent &torrent;
     std::string client_id;
+
+    std::mutex pieces_mutex;
     std::vector<PieceStatus> pieces;
 
     std::set<std::unique_ptr<TorFile>, TorFileOffsetComparer> torfiles;
+
+    PieceOrderer piece_orderer;
 
     TorrentState(const Torrent &t);
     int next_missing_piece() const;
@@ -105,12 +140,12 @@ struct TorrentState {
 
     bool preallocate_files(fs::path where);
     // сохранение и загрузка из файла
-    bool try_save();
+    bool try_save(fs::path file);
     bool try_load(fs::path file);
 
     // отдача
     std::vector<uint8_t> get_piece_by_index(size_t index) const;
-
+    void clear_downloading_pieces();
     uint64_t downloaded() const;
 
   private:
@@ -143,10 +178,32 @@ struct Message {
 struct Peer {
     uint8_t ip[4];
     uint16_t port;
+
+    auto ntohl_ip() const {
+        uint32_t ip_net;
+        std::memcpy(&ip_net, ip, 4);
+        return ntohl(ip_net);
+    }
     std::string ip_str() const;
     std::string port_str() const;
     std::string str() const;
 };
+
+struct PeerComparer {
+    using is_transparent = void;
+
+    bool operator()(const Peer &a, const Peer &b) const {
+        uint32_t ia;
+        std::memcpy(&ia, a.ip, 4);
+
+        uint32_t ib;
+        std::memcpy(&ib, b.ip, 4);
+        if (ia != ib)
+            return ia < ib;
+        return a.port < b.port;
+    }
+};
+
 std::vector<Peer> parse_peers(const std::string &peers_binary);
 
 std::string find_info_hash(std::istream &file);
@@ -193,14 +250,5 @@ std::vector<PeerConnection> connect_to_peers(const std::vector<Peer> &peers,
                                              TorrentState &ts, uint16_t conn_count);
 
 void print_torrent(const Torrent &torrent);
-
-#if 0
-// Управляет коннектами, хранит список известных пиров, время от времени проверят список
-// на новых рабочих пиров
-struct PeerBoss {
-    std::set<Peer> peers;
-    std::vector<std::unique_ptr<PeerConnection>> connects;  
-};
-#endif
 
 #endif // INCLUDE_TORRENT_HPP_

@@ -6,3 +6,4 @@ build.bat
 build.py
 *.tmp
 todo.md
+*.state

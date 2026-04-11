@@ -30,7 +30,7 @@ std::vector<Peer> parse_peers(const std::string &peers_binary) {
 
 // ─── TorrentState ────────────────────────────────────────────────────────────
 
-TorrentState::TorrentState(const Torrent &t) : torrent(t) {
+TorrentState::TorrentState(const Torrent &t) : torrent(t), piece_orderer(t.info.pieces.size()) {
     pieces.resize(t.info.pieces.size());
 
     client_id = "-BT7105-123456789101";
@@ -41,6 +41,7 @@ TorrentState::TorrentState(const Torrent &t) : torrent(t) {
         if (is_last && pieces[i].total_size == 0)
             pieces[i].total_size = t.info.piece_length;
         pieces[i].state = PieceStatus::State::Missing;
+        pieces[i].last_interacted = std::chrono::steady_clock::now();
     }
     spdlog::debug("TorrentState initialized: {} pieces, total {} bytes", pieces.size(),
                   t.total_length);
@@ -423,8 +424,15 @@ void PeerConnection::run() {
 
     spdlog::info("[{}] Starting download loop", peer.str());
     send_interested();
+    auto now = std::chrono::steady_clock::now();
 
     while (!torrent_state.is_done()) {
+        auto dt = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(dt - now).count();
+        if (elapsed > 5) {
+            torrent_state.clear_downloading_pieces();
+            now = dt;
+        }
         Message msg = recv_message();
         spdlog::debug("[{}] Got message type={}", peer.str(), (int)msg.type);
 
@@ -464,6 +472,7 @@ void PeerConnection::run() {
             break;
 
         case MessageType::Piece: {
+            spdlog::debug("Got piece {}, len={}", msg.index, msg.length);
             bool was_done =
                 (torrent_state.pieces[msg.index].state == PieceStatus::State::Done);
             handle_piece_v2(msg);
@@ -492,7 +501,7 @@ void PeerConnection::run() {
             break;
         }
     }
-
+    torrent_state.files_built = true;
     spdlog::info("[{}] Download complete", peer.str());
 }
 
@@ -586,7 +595,7 @@ void TorrentState::init_torfiles(fs::path where) {
             // make torfile
             auto tf = std::make_unique<TorFile>();
 #ifdef USING_SFILE
-            tf->descriptor = SFile(file_path.string());
+            tf->descriptor = SFile(file_path);
 #else
             tf->descriptor =
                 std::fstream(file_path, std::ios::in | std::ios::out | std::ios::binary |
@@ -641,10 +650,11 @@ void PeerConnection::handle_piece_v2(const Message &msg) {
         }
 
         std::copy(msg.data.begin(), msg.data.end(), piece.buffer.data() + msg.begin);
+        piece.last_interacted = std::chrono::steady_clock::now();
         piece.downloaded += msg.data.size();
         if (piece.downloaded >= piece.total_size) {
             piece_complete = true;
-            piece.state = PieceStatus::State::Done;
+            // piece.state = PieceStatus::State::Done;
             completed_buffer = std::move(piece.buffer);
             piece.buffer.clear();
             // piece.state = PieceStatus::State::Verifying;
@@ -710,8 +720,9 @@ void PeerConnection::handle_piece_v2(const Message &msg) {
 }
 
 // --- try_save
-bool TorrentState::try_save() {
-    std::ofstream file(torrent.info_hash + ".shitstate", std::ios::binary);
+bool TorrentState::try_save(fs::path filename = "") {
+    std::ofstream file(filename == "" ? torrent.info_hash + ".shitstate" : filename,
+                       std::ios::binary);
     if (!file) {
         spdlog::error("Cannot save Torrent State to file! Aborting");
         return false;
@@ -721,25 +732,25 @@ bool TorrentState::try_save() {
     size_t pieces_count = pieces.size();
     file.write(reinterpret_cast<const char *>(&pieces_count), sizeof(size_t));
     for (auto &i : pieces) {
-        file.write(reinterpret_cast<const char *>(&i.state), sizeof(PieceStatus::State));
+
+        if (i.state == PieceStatus::State::Downloading) {
+        }
+        PieceStatus::State save_state = i.state != PieceStatus::State::Downloading
+                                            ? i.state
+                                            : PieceStatus::State::Missing;
+        file.write(reinterpret_cast<const char *>(&save_state),
+                   sizeof(PieceStatus::State));
         size_t size = i.buffer.size();
         file.write(reinterpret_cast<const char *>(&size), sizeof(size_t));
-        if (size > 0) {
+        if (size > 0 && save_state != PieceStatus::State::Missing) {
             file.write(reinterpret_cast<const char *>(i.buffer.data()), size);
         }
         file.write(reinterpret_cast<const char *>(&i.downloaded), sizeof(uint32_t));
         file.write(reinterpret_cast<const char *>(&i.total_size), sizeof(uint32_t));
     }
     return true;
-    // for(auto& i : torfiles){
-    //     size_t path_size = i->path.string().size();
-    //     file.write(reinterpret_cast<const char*>(&path_size), sizeof(size_t));
-    //     file.write(i->path.string().data(), path_size);
-
-    //     file.write(reinterpret_cast<const char*>(&i->size), sizeof(size_t));
-    //     file.write(reinterpret_cast<const char*>(&i->global_offset), sizeof(size_t));
-    // }
 }
+
 bool TorrentState::try_load(fs::path filepath) {
     std::ifstream file(filepath, std::ios::binary);
     if (!file) {
@@ -810,3 +821,21 @@ uint64_t TorrentState::downloaded() const {
     }
     return downloaded;
 }
+
+void TorrentState::clear_downloading_pieces() {
+    std::lock_guard<std::mutex> lock(pieces_mutex);
+    spdlog::warn("Clearing downloading pieces");
+    auto now = std::chrono::steady_clock::now();
+
+    for (auto &i : pieces) {
+        auto elapsed =
+            std::chrono::duration_cast<std::chrono::seconds>(now - i.last_interacted)
+                .count();
+        if (i.state == PieceStatus::State::Downloading && elapsed >= 5) {
+            i.state = PieceStatus::State::Missing;
+            i.buffer.clear();
+            i.downloaded = 0;
+        }
+    }
+}
+
