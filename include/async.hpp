@@ -60,6 +60,4 @@ struct PeerConn2 {
     awaitable<void> request_next_piece();
 };
 
-struct 
-
 #endif // INCLUDE_ASYNC_HPP_

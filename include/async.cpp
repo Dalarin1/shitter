@@ -1,6 +1,6 @@
 #include "async.hpp"
 
-static AsyncConn::awaitable<AsyncConn> connect(asio::io_context &ctx, Peer peer) {
+awaitable<AsyncConn> AsyncConn::connect(asio::io_context &ctx, Peer peer) {
     AsyncConn c(ctx);
     asio::ip::tcp::endpoint ep(asio::ip::address_v4(peer.ntohl_ip()), peer.port);
     co_await c.sock.async_connect(ep, asio::use_awaitable);
@@ -22,7 +22,7 @@ awaitable<void> AsyncConn::recv_into(void *buf, uint64_t size) {
     co_await asio::async_read(sock, asio::buffer(buf, size), asio::use_awaitable);
 }
 
-static awaitable<std::shared_ptr<PeerConn2>> PeerConn2::create(asio::io_context &ioc,
+awaitable<std::shared_ptr<PeerConn2>> PeerConn2::create(asio::io_context &ioc,
                                                                Peer p, TorrentState &ts) {
     auto c = std::make_shared<PeerConn2>(
         PeerConn2{p, co_await AsyncConn::connect(ioc, p), ts});
