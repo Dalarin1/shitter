@@ -10,10 +10,12 @@
 #include <set>
 #include <filesystem>
 #include <chrono>
+#include <unordered_map>
 #include "bencode.hpp"
 #include "protocol.hpp"
 #include "sha1.hpp"
 #include "file.hpp"
+#include "asio.hpp"
 
 namespace fs = std::filesystem;
 
@@ -95,10 +97,10 @@ struct TorFileOffsetComparer {
 // TODO
 // прямо сейчас - не работает вообще, переписать надобно
 struct PieceOrderer {
-    std::vector<int> counts; 
+    std::vector<int> counts;
 
     PieceOrderer() = default;
-    PieceOrderer(int total_pieces) : counts(total_pieces){}
+    PieceOrderer(int total_pieces) : counts(total_pieces) {}
 
     void add_bitfield(const std::vector<bool> &bitfield) {
         for (size_t i = 0; i < bitfield.size(); i++)
@@ -119,10 +121,17 @@ struct PieceOrderer {
         return best;
     }
 };
-
+struct ArrayHash {
+    size_t operator()(const std::array<uint8_t, 20>& a) const {
+        size_t seed = 0;
+        for (auto b : a)
+            seed ^= std::hash<uint8_t>{}(b) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+        return seed;
+    }
+};
 struct TorrentState {
     bool files_built = false;
-    
+
     const Torrent &torrent;
     std::string client_id;
 
@@ -132,6 +141,7 @@ struct TorrentState {
     std::set<std::unique_ptr<TorFile>, TorFileOffsetComparer> torfiles;
 
     PieceOrderer piece_orderer;
+    inline static std::unordered_map<std::array<uint8_t, 20>, TorrentState *, ArrayHash> torrent_map;
 
     TorrentState(const Torrent &t);
     int next_missing_piece() const;
@@ -187,6 +197,8 @@ struct Peer {
     std::string ip_str() const;
     std::string port_str() const;
     std::string str() const;
+
+    static Peer from_endpoint(const asio::ip::tcp::endpoint &ep);
 };
 
 struct PeerComparer {

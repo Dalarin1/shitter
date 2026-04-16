@@ -11,6 +11,6 @@ int main(){
     TorrentState torrent_state = TorrentState(torrent);
 
     asio::io_context ioc;
-    BigBoss bb(torrent_state, ioc);
+    Downloader bb(torrent_state, ioc);
     bb.run();
 }

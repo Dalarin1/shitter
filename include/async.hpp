@@ -17,12 +17,19 @@ struct AsyncConn {
     awaitable<void> send(const std::string &data);
     awaitable<std::vector<uint8_t>> recv_exact(uint64_t n);
     awaitable<void> recv_into(void *buf, uint64_t size);
+    static AsyncConn from_socket(tcp::socket sock) {
+        AsyncConn c(sock.get_executor());
+        c.sock = std::move(sock);
+        return c;
+    }
 
   private:
     explicit AsyncConn(asio::io_context &ioc) : sock(ioc) {}
+    explicit AsyncConn(asio::any_io_executor ex) : sock(ex) {}
 };
 
-/// @brief Соединение с пиром, в основном загружает, но если  пир попросит, может и отдавать
+/// @brief Соединение с пиром, в основном загружает, но если  пир попросит, может и
+/// отдавать
 struct PeerConn2 {
     Peer peer;
     AsyncConn conn;
@@ -49,11 +56,10 @@ struct PeerConn2 {
     awaitable<void> send_bitfield();
     awaitable<void> send_have(uint32_t index);
     awaitable<void> send_unchoke();
-    
-    
+
     /// @brief Загружает байты из сообщения в буфер куска.
     /// @brief Если кусок скачан полностью, проверяет sha1 и записывает в файлы.
-    /// @brief Так же помечает соотв. piece в TorrentState как Done 
+    /// @brief Так же помечает соотв. piece в TorrentState как Done
     /// @param msg Распаршенное сообщение от пира
     awaitable<void> handle_piece(const Message &msg);
     awaitable<void> run();

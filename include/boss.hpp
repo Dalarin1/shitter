@@ -50,14 +50,14 @@ NOTES
 потом поменяю на один поток - несколько коннектов, через (e)poll, наверн
 
 важно, чтобы при завершении загрузки БигБосс об этом узнавал, но наверное это можно
-проверять в цикле BigBoss::run
+проверять в цикле Downloader::run
 в конце концов, даже с вагоном потоков, каждый из потоков выполняет один PeerConnect::run,
 а тот завершается, когда всё скачано, т.е. TorrentState.done() == true
 */
 
 #define THREAD_COUNT 2
 
-struct BigBoss {
+struct Downloader {
     TorrentState &ts;
     std::string announce_host;
     std::string announce_path;
@@ -80,7 +80,7 @@ struct BigBoss {
 
     std::chrono::steady_clock::time_point last_tracker_contact;
 
-    BigBoss(TorrentState &_ts, asio::io_context &_ctx)
+    Downloader(TorrentState &_ts, asio::io_context &_ctx)
         : ts(_ts), ctx(_ctx), announce_host(get_url_hostname(ts.torrent.announce_url)),
           announce_path(get_url_path(ts.torrent.announce_url)),
           http_tracker_conn(std::wstring(announce_host.begin(), announce_host.end())),
@@ -147,17 +147,17 @@ struct BigBoss {
         return http_tracker_conn.get(std::wstring(path.begin(), path.end()));
     }
 
-    ~BigBoss() {
+    ~Downloader() {
         // отправляем финальный запрос трекеру
-        try {
-            if (ts.is_done()) {
-                send_request("completed");
-            } else {
-                send_request("stopped");
-            }
-        } catch (const std::exception &e) {
-            spdlog::warn("Failed to notify tracker on shutdown: {}", e.what());
-        }
+        // try {
+        //     if (ts.is_done()) {
+        //         send_request("completed");
+        //     } else {
+        //         send_request("stopped");
+        //     }
+        // } catch (const std::exception &e) {
+        //     spdlog::warn("Failed to notify tracker on shutdown: {}", e.what());
+        // }
 
         // сохраняем стейт
         try {

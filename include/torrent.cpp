@@ -30,7 +30,10 @@ std::vector<Peer> parse_peers(const std::string &peers_binary) {
 
 // ─── TorrentState ────────────────────────────────────────────────────────────
 
-TorrentState::TorrentState(const Torrent &t) : torrent(t), piece_orderer(t.info.pieces.size()) {
+TorrentState::TorrentState(const Torrent &t)
+    : torrent(t), piece_orderer(t.info.pieces.size()) {
+    torrent_map[torrent.info_hash_raw] = this;
+
     pieces.resize(t.info.pieces.size());
 
     client_id = "-BT7105-123456789101";
@@ -839,3 +842,10 @@ void TorrentState::clear_downloading_pieces() {
     }
 }
 
+Peer Peer::from_endpoint(const asio::ip::tcp::endpoint &ep) {
+    Peer p;
+    auto addr = ep.address().to_v4().to_bytes(); // std::array<uint8_t,4>
+    std::memcpy(p.ip, addr.data(), 4);
+    p.port = ep.port();
+    return p;
+}
