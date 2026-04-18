@@ -1,8 +1,9 @@
 #include "torrent.hpp"
 #include "spdlog/spdlog.h"
 #include "boss.hpp"
+#include "sender.hpp"
 
-int main(){
+int main() {
     spdlog::set_level(spdlog::level::debug);
     Torrent torrent(L"test/Высокая кухня - Похлебкин В. В. - ЧАЙ [2007, PDF, RUS] "
                     L"[rutracker-605222].torrent");
@@ -12,5 +13,10 @@ int main(){
 
     asio::io_context ioc;
     Downloader bb(torrent_state, ioc);
-    bb.run();
+    // bb.run();
+
+    SeedServer uploader(ioc, 6888);
+    asio::co_spawn(
+        ioc, [&]() -> awaitable<void> { co_await uploader.run(); }, asio::detached);
+    ioc.run();
 }
