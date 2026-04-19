@@ -58,7 +58,7 @@ struct SFile {
 
     SFile() = default;
     SFile(const std::filesystem::path &path) {
-        fd = open(path.string().c_str(), O_RDWR);
+        fd = open(path.string().c_str(), O_RDWR | O_CREAT);
         if (fd == -1)
             spdlog::error("Cannot open file {}", path.string());
     }

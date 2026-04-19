@@ -46,6 +46,20 @@ TorrentState::TorrentState(const Torrent &t)
         pieces[i].state = PieceStatus::State::Missing;
         pieces[i].last_interacted = std::chrono::steady_clock::now();
     }
+
+    if (fs::exists(fs::path(torrent.info_hash + ".state"))) {
+        bool success = try_load(fs::path(torrent.info_hash + ".state"));
+        if (!success) {
+            spdlog::error("State file loading failed; Creating torrent files");
+            preallocate_files(fs::current_path());
+        } else {
+            spdlog::info("State successfully loaded");
+        }
+    } else {
+        spdlog::error("State file loading failed; Creating torrent files");
+        preallocate_files(fs::current_path());
+    }
+
     spdlog::debug("TorrentState initialized: {} pieces, total {} bytes", pieces.size(),
                   t.total_length);
 }
@@ -59,6 +73,9 @@ int TorrentState::next_missing_piece(const std::vector<bool> &peer_bitfield) con
                           std::hash<std::thread::id>{}(std::this_thread::get_id()), i);
             return (int)i;
         }
+    }
+    if(!is_done()){
+        spdlog::error("Torrent state is not done, but next_missing_piece returned -1");
     }
     return -1;
 }
@@ -98,8 +115,8 @@ std::string find_info_hash(std::istream &file) {
 
 // ─── Torrent ─────────────────────────────────────────────────────────────────
 
-Torrent::Torrent(std::wstring filename) {
-    auto file = std::ifstream(fs::path(filename), std::ios::binary);
+Torrent::Torrent(fs::path filename) {
+    auto file = std::ifstream(filename, std::ios::binary);
     BencodeVal data = read_bencode(file);
     file.close();
 
@@ -570,6 +587,7 @@ void print_torrent(const Torrent &t) {
 
 // ─── preallocate_files ─────────────────────────────────────────────────────────
 bool TorrentState::preallocate_files(fs::path where) {
+    spdlog::debug("Preallocating files");
     try {
         fs::create_directories(where);
         init_torfiles(where);
@@ -583,8 +601,9 @@ bool TorrentState::preallocate_files(fs::path where) {
 // ─── init_torfiles ─────────────────────────────────────────────────────────
 
 void TorrentState::init_torfiles(fs::path where) {
-    if (!torfiles.empty())
-        return;
+    if (!torfiles.empty()){
+        spdlog::error("init_torfiles: torfiles empty");
+    return;}
 
     // multi-file
     if (torrent.info.length == -1) {
@@ -600,6 +619,7 @@ void TorrentState::init_torfiles(fs::path where) {
 #ifdef USING_SFILE
             tf->descriptor = SFile(file_path);
 #else
+            spdlog::debug("Creating file {}", file_path.string());
             tf->descriptor =
                 std::fstream(file_path, std::ios::in | std::ios::out | std::ios::binary |
                                             std::ios::trunc);
@@ -622,6 +642,7 @@ void TorrentState::init_torfiles(fs::path where) {
 #ifdef USING_SFILE
     tf->descriptor = SFile(file_path.string());
 #else
+    spdlog::debug("Creating file {}", file_path.string());
     tf->descriptor = std::fstream(file_path, std::ios::in | std::ios::out |
                                                  std::ios::binary | std::ios::trunc);
 #endif
@@ -828,13 +849,14 @@ uint64_t TorrentState::downloaded() const {
 void TorrentState::clear_downloading_pieces() {
     std::lock_guard<std::mutex> lock(pieces_mutex);
     spdlog::warn("Clearing downloading pieces");
-    auto now = std::chrono::steady_clock::now();
+    // auto now = std::chrono::steady_clock::now();
 
     for (auto &i : pieces) {
-        auto elapsed =
-            std::chrono::duration_cast<std::chrono::seconds>(now - i.last_interacted)
-                .count();
-        if (i.state == PieceStatus::State::Downloading && elapsed >= 5) {
+        // auto elapsed =
+        //     std::chrono::duration_cast<std::chrono::seconds>(now - i.last_interacted)
+        //         .count();
+        // if (i.state == PieceStatus::State::Downloading && elapsed >= 5) {
+        if(i.state == PieceStatus::State::Downloading){
             i.state = PieceStatus::State::Missing;
             i.buffer.clear();
             i.downloaded = 0;

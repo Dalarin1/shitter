@@ -73,63 +73,97 @@ struct Downloader {
     int interval = 30;
 
     asio::io_context &ctx;
-    asio::executor_work_guard<asio::io_context::executor_type> work_guard;
+    // asio::executor_work_guard<asio::io_context::executor_type> work_guard;
 
-    std::vector<std::thread> io_threads;
-    bool threads_joined;
+    // std::vector<std::thread> io_threads;
+    // bool threads_joined;
 
     std::chrono::steady_clock::time_point last_tracker_contact;
+    bool started = false;
+
+    std::function<void()> on_complete;
 
     Downloader(TorrentState &_ts, asio::io_context &_ctx)
         : ts(_ts), ctx(_ctx), announce_host(get_url_hostname(ts.torrent.announce_url)),
           announce_path(get_url_path(ts.torrent.announce_url)),
           http_tracker_conn(std::wstring(announce_host.begin(), announce_host.end())),
-          last_tracker_contact(std::chrono::steady_clock::now()),
-          work_guard(asio::make_work_guard(ctx)) {
+          last_tracker_contact(std::chrono::steady_clock::now()) {
 
-        if (fs::exists(fs::path(ts.torrent.info_hash + ".state"))) {
-            bool success = ts.try_load(fs::path(ts.torrent.info_hash + ".state"));
-            if (!success) {
-                spdlog::error("State file loading failed; Creating torrent files");
-                ts.preallocate_files(fs::current_path());
-            }
+        // if (fs::exists(fs::path(ts.torrent.info_hash + ".state"))) {
+        //     bool success = ts.try_load(fs::path(ts.torrent.info_hash + ".state"));
+        //     if (!success) {
+        //         spdlog::error("State file loading failed; Creating torrent files");
+        //         ts.preallocate_files(fs::current_path());
+        //     }
+        // }
+        try {
+            send_start_and_recv_peers();
+            started = true;
+        } catch (const std::exception &e) {
+            spdlog::warn("Failed to notify tracker on shutdown: {}", e.what());
         }
     }
 
-    void run() {
+    awaitable<void> run() {
         if (ts.is_done()) {
             spdlog::warn("Torrent already done, aborting");
-            return;
+            co_return;
         }
 
         // запускаем потоки
-        for (int i = 0; i < THREAD_COUNT; i++)
-            io_threads.emplace_back([this] { ctx.run(); });
+        // for (int i = 0; i < THREAD_COUNT; i++)
+        //     io_threads.emplace_back([this] { ctx.run(); });
 
-        send_start_and_recv_peers();
+        if (!started) {
+            try {
+                send_start_and_recv_peers();
+                started = true;
+            } catch (const std::exception &e) {
+                spdlog::warn("Failed to notify tracker on shutdown: {}", e.what());
+                co_return;
+            }
+        }
         spawn_new_peers();
 
+        asio::steady_timer timer(ctx);
+        auto last_clear = std::chrono::steady_clock::now();
+
         while (!ts.is_done()) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+            timer.expires_after(asio::chrono::seconds(1));
+            co_await timer.async_wait(asio::use_awaitable);
 
             auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                               now - last_tracker_contact)
-                               .count();
-            if (elapsed >= interval) {
+
+            // проверка зависших кусков
+            auto clear_elapsed =
+                std::chrono::duration_cast<std::chrono::seconds>(now - last_clear)
+                    .count();
+            if (clear_elapsed > 5) {
+                ts.clear_downloading_pieces();
+                last_clear = now;
+            }
+
+            // проверка трекера
+            auto tracker_elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                                       now - last_tracker_contact)
+                                       .count();
+            if (tracker_elapsed >= interval) {
                 try {
                     send_empty_and_recv_peers();
-                    last_tracker_contact = std::chrono::steady_clock::now();
+                    last_tracker_contact = now;
                 } catch (const std::exception &e) {
                     spdlog::warn("Tracker re-announce failed: {}", e.what());
                 }
             }
+
             spawn_new_peers();
         }
-
         // скачали всё — отпускаем ioc и ждём завершения корутин
-        work_guard.reset();
-        join_threads();
+        // work_guard.reset();
+        // join_threads();
+
+        spdlog::info("Torrent {} done", ts.torrent.info_hash);
+        on_complete();
     }
 
     HttpConn::response send_request(std::string event = "") {
@@ -149,15 +183,15 @@ struct Downloader {
 
     ~Downloader() {
         // отправляем финальный запрос трекеру
-        // try {
-        //     if (ts.is_done()) {
-        //         send_request("completed");
-        //     } else {
-        //         send_request("stopped");
-        //     }
-        // } catch (const std::exception &e) {
-        //     spdlog::warn("Failed to notify tracker on shutdown: {}", e.what());
-        // }
+        try {
+            if (ts.is_done()) {
+                send_request("completed");
+            } else {
+                send_request("stopped");
+            }
+        } catch (const std::exception &e) {
+            spdlog::warn("Failed to notify tracker on shutdown: {}", e.what());
+        }
 
         // сохраняем стейт
         try {
@@ -190,65 +224,36 @@ struct Downloader {
         }
     }
 
-    [[deprecated]] void construct_threads_for_new_peers() {
+    void spawn_new_peers() {
+        // spdlog::debug("Spawning new peers");
+        int n = 0;
         for (auto peer : peer_list) {
             if (connected_peers.count(peer)) {
+                n++;
                 continue;
             }
-            try {
-                auto pc = std::make_unique<PeerConnection>(peer, ts);
-                if (!pc->do_handshake())
-                    continue;
 
-                connected_peers.emplace(peer);
-                connects.push_back(std::move(pc));
+            connected_peers.emplace(peer);
 
-                PeerConnection *raw = connects.back().get();
-                io_threads.emplace_back([raw]() {
+            asio::co_spawn(
+                ctx,
+                [this, peer]() -> awaitable<void> {
                     try {
-                        raw->run();
+                        auto pc = co_await PeerConn2::create(ctx, peer, ts);
+                        co_await pc->run();
+                    } catch (const asio::system_error &e) {
+                        spdlog::warn("[{}] asio error: {} ({})", peer.str(), e.what(),
+                                     e.code().message());
                     } catch (const std::exception &e) {
-                        spdlog::warn("[{}] run() error: {}", raw->peer.str(), e.what());
+                        spdlog::warn("[{}] error: {}", peer.str(), e.what());
+                    } catch (...) {
+                        spdlog::warn("[{}] unknown exception", peer.str());
                     }
-                });
-            } catch (std::exception &e) {
-                spdlog::warn("Cant connect to peer {}", peer.str());
-            }
+                    spdlog::debug("[{}] coroutine exited", peer.str());
+                },
+                asio::detached);
         }
     }
-    void join_threads() {
-        for (auto &th : io_threads) {
-            if (th.joinable())
-                th.join();
-        }
-    }
-
-   void spawn_new_peers() {
-    for (auto peer : peer_list) {
-        if (connected_peers.count(peer))
-            continue;
-
-        connected_peers.emplace(peer);
-
-        asio::co_spawn(
-            ctx,
-            [this, peer]() -> awaitable<void> {
-                try {
-                    auto pc = co_await PeerConn2::create(ctx, peer, ts);
-                    co_await pc->run();
-                } catch (const asio::system_error &e) {
-                    spdlog::warn("[{}] asio error: {} ({})", 
-                        peer.str(), e.what(), e.code().message());
-                } catch (const std::exception &e) {
-                    spdlog::warn("[{}] error: {}", peer.str(), e.what());
-                } catch (...) {
-                    spdlog::warn("[{}] unknown exception", peer.str());
-                }
-                spdlog::debug("[{}] coroutine exited", peer.str());
-            },
-            asio::detached);
-    }
-}
 };
 
 #endif

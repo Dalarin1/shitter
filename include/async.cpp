@@ -1,3 +1,4 @@
+#include <chrono>
 #include "async.hpp"
 
 awaitable<AsyncConn> AsyncConn::connect(asio::io_context &ctx, Peer peer) {
@@ -132,6 +133,7 @@ awaitable<void> PeerConn2::send_keep_alive() {
 }
 
 awaitable<void> PeerConn2::send_request(uint32_t index, uint32_t begin, uint32_t length) {
+    spdlog::debug("[{}] Requesting piece {} at {}, length = {}", peer.str(), index, begin, length);
     std::string req = u32_to_str(13);
     req += static_cast<char>(6);
     req += u32_to_str(index);
@@ -220,7 +222,7 @@ awaitable<void> PeerConn2::handle_piece(const Message &msg) {
         {
             std::lock_guard<std::mutex> flock(tf.mut); // мьютекс только на этот файл
 
-            spdlog::info("Writing {} bytes in {}, pos: {}", completed_buffer.size(),
+            spdlog::info("[{}] Writing {} bytes in {}, pos: {}", peer.str(), completed_buffer.size(),
                          tf.path.string(), file_offset);
 #ifdef USING_SFILE
             tf.descriptor.write(
@@ -369,6 +371,7 @@ awaitable<void> PeerConn2::request_next_piece() {
         if (torrent_state.pieces[piece].state != PieceStatus::State::Missing)
             co_return;
         torrent_state.pieces[piece].state = PieceStatus::State::Downloading;
+        torrent_state.pieces[piece].last_interacted = std::chrono::steady_clock::now();
     }
     co_await send_request(piece, 0, 16384);
 }

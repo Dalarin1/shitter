@@ -203,10 +203,16 @@ awaitable<void> SeedConn::handle_request(const Message &msg) {
 }
 
 awaitable<void> SeedServer::run() {
+    std::cout << "Server started, waiting for connections..." << std::endl;
+    
     for (;;) {
+        std::cout << "Waiting for new connection..." << std::endl;
+        
         auto sock = co_await acceptor.async_accept(asio::use_awaitable);
         auto peer = Peer::from_endpoint(sock.remote_endpoint());
-        spdlog::debug("New Peer connected - {}", peer.str());
+        
+        std::cout << "New connection from: " << peer.str() << std::endl;
+
         auto conn = std::make_shared<SeedConn>(SeedConn{
             .peer = peer,
             .conn = AsyncConn::from_socket(std::move(sock)),

@@ -42,7 +42,7 @@ struct Torrent {
         std::vector<file> files;         // If only single file present, files.size = 0
     } info;
 
-    Torrent(std::wstring filename);
+    Torrent(fs::path filename);
     ~Torrent() = default;
 };
 
@@ -132,7 +132,7 @@ struct ArrayHash {
 struct TorrentState {
     bool files_built = false;
 
-    const Torrent &torrent;
+    Torrent torrent;
     std::string client_id;
 
     std::mutex pieces_mutex;
