@@ -745,7 +745,7 @@ void PeerConnection::handle_piece_v2(const Message &msg) {
 
 // --- try_save
 bool TorrentState::try_save(fs::path filename = "") {
-    std::ofstream file(filename == "" ? torrent.info_hash + ".shitstate" : filename,
+    std::ofstream file(filename == "" ? torrent.info_hash + ".state" : filename,
                        std::ios::binary);
     if (!file) {
         spdlog::error("Cannot save Torrent State to file! Aborting");

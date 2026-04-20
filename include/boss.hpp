@@ -7,53 +7,7 @@
 #include <chrono>
 #include "torrent.hpp"
 #include "async.hpp"
-
-/*
-логика работы биг босса
-
-при создании объекта - захватываем нужный Torrent, создаем ему TorrentState
-если есть соотв. файлик стейта - подгружаем данные оттуда в наш стейт
-
-отправляем event=started трэкеру, получаем список пиров, запоминаем их
-
-создаем по коннекту на каждый пир, проверяем рукопожатие, если не прошло - сбрасываем и
-удаляем коннект
-
-для каждого из оставшихся коннектов - вызываем run (там в цикле скачивание следующего
-куска, которого нет у нас, но есть у пира)
-
-дальше, в цикле -
-
-    проверяем, не скачали ли мы все. Если скачали - закрываемся, конец цикла
-
-    смотрим, как давно общались с трэкером. Если достаточно давно - посылаем ему запрос
-    снова, получаем список пиров.
-
-    Если есть новые пиры, обновляем наш список пиров
-
-    пробуем нерукопожатых пиров из списка, если есть рукопожатые - запускаем их коннекты
-на скачивание
-
-В деструкторе -
-    закрываем все незакрытые коннекты
-
-    если скачано всё - отправляем трэкеру запрос с event=completed, иначе - event=stopped
-
-    сохраняем TorrentState в файлик, чтоб потом не перекачивать уже готовое
-
-    канец
-*/
-
-/*
-NOTES
-пока что БигБосс будет работать с говном - один поток на один коннект
-потом поменяю на один поток - несколько коннектов, через (e)poll, наверн
-
-важно, чтобы при завершении загрузки БигБосс об этом узнавал, но наверное это можно
-проверять в цикле Downloader::run
-в конце концов, даже с вагоном потоков, каждый из потоков выполняет один PeerConnect::run,
-а тот завершается, когда всё скачано, т.е. TorrentState.done() == true
-*/
+#include "defer.hpp"
 
 #define THREAD_COUNT 2
 
@@ -62,64 +16,59 @@ struct Downloader {
     std::string announce_host;
     std::string announce_path;
     HttpConn http_tracker_conn;
-
     std::set<Peer, PeerComparer> peer_list;
     std::set<Peer, PeerComparer> connected_peers;
     std::list<std::unique_ptr<PeerConnection>> connects;
-
     std::string client_id = "-BT7105-123456789101";
     uint16_t port = 6888;
-
     int interval = 30;
-
     asio::io_context &ctx;
-    // asio::executor_work_guard<asio::io_context::executor_type> work_guard;
-
-    // std::vector<std::thread> io_threads;
-    // bool threads_joined;
-
     std::chrono::steady_clock::time_point last_tracker_contact;
+    std::chrono::steady_clock::time_point last_progress;
+    std::chrono::steady_clock::time_point last_saved_progress;
+    uint64_t last_downloaded = 0;
     bool started = false;
-
     std::function<void()> on_complete;
 
     Downloader(TorrentState &_ts, asio::io_context &_ctx)
         : ts(_ts), ctx(_ctx), announce_host(get_url_hostname(ts.torrent.announce_url)),
           announce_path(get_url_path(ts.torrent.announce_url)),
           http_tracker_conn(std::wstring(announce_host.begin(), announce_host.end())),
-          last_tracker_contact(std::chrono::steady_clock::now()) {
+          last_tracker_contact(std::chrono::steady_clock::now()),
+          last_progress(std::chrono::steady_clock::now()),
+          last_saved_progress(std::chrono::steady_clock::now()) {
 
-        // if (fs::exists(fs::path(ts.torrent.info_hash + ".state"))) {
-        //     bool success = ts.try_load(fs::path(ts.torrent.info_hash + ".state"));
-        //     if (!success) {
-        //         spdlog::error("State file loading failed; Creating torrent files");
-        //         ts.preallocate_files(fs::current_path());
-        //     }
-        // }
         try {
             send_start_and_recv_peers();
             started = true;
         } catch (const std::exception &e) {
-            spdlog::warn("Failed to notify tracker on shutdown: {}", e.what());
+            spdlog::warn("Failed to notify tracker on startup: {}", e.what());
         }
     }
 
     awaitable<void> run() {
+        // сохраняем стейт в конце при выходе из функции
+        defer({
+            try {
+                ts.try_save(fs::path(ts.torrent.info_hash + ".state"));
+            } catch (const std::exception &e) {
+                spdlog::error("Failed to save state: {}", e.what());
+            }
+        });
+
         if (ts.is_done()) {
             spdlog::warn("Torrent already done, aborting");
+            on_complete();
             co_return;
         }
-
-        // запускаем потоки
-        // for (int i = 0; i < THREAD_COUNT; i++)
-        //     io_threads.emplace_back([this] { ctx.run(); });
 
         if (!started) {
             try {
                 send_start_and_recv_peers();
                 started = true;
             } catch (const std::exception &e) {
-                spdlog::warn("Failed to notify tracker on shutdown: {}", e.what());
+                spdlog::warn("Failed to notify tracker on startup: {}", e.what());
+                on_complete();
                 co_return;
             }
         }
@@ -133,6 +82,20 @@ struct Downloader {
             co_await timer.async_wait(asio::use_awaitable);
 
             auto now = std::chrono::steady_clock::now();
+
+            auto cur_progress = ts.downloaded();
+            if (cur_progress > last_downloaded) {
+                last_downloaded = cur_progress;
+                last_progress = now;
+            }
+
+            auto progress_elapsed =
+                std::chrono::duration_cast<std::chrono::seconds>(now - last_progress)
+                    .count();
+            if (progress_elapsed > 10) {
+                reconnect_peers();
+                last_progress = now; // сбрасываем таймер
+            }
 
             // проверка зависших кусков
             auto clear_elapsed =
@@ -157,10 +120,21 @@ struct Downloader {
             }
 
             spawn_new_peers();
+
+            // сохраняем стейт
+            auto save_elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                                    now - last_saved_progress)
+                                    .count();
+            if (save_elapsed > 10) {
+                try {
+                    ts.try_save(fs::path(ts.torrent.info_hash + ".state"));
+                } catch (const std::exception &e) {
+                    spdlog::error("Failed to save state: {}", e.what());
+                    
+                }
+                last_saved_progress = now;
+            }
         }
-        // скачали всё — отпускаем ioc и ждём завершения корутин
-        // work_guard.reset();
-        // join_threads();
 
         spdlog::info("Torrent {} done", ts.torrent.info_hash);
         on_complete();
@@ -182,6 +156,7 @@ struct Downloader {
     }
 
     ~Downloader() {
+        spdlog::debug("~Downloader");
         // отправляем финальный запрос трекеру
         try {
             if (ts.is_done()) {
@@ -192,13 +167,6 @@ struct Downloader {
         } catch (const std::exception &e) {
             spdlog::warn("Failed to notify tracker on shutdown: {}", e.what());
         }
-
-        // сохраняем стейт
-        try {
-            ts.try_save(fs::path(ts.torrent.info_hash + ".state"));
-        } catch (const std::exception &e) {
-            spdlog::error("Failed to save state: {}", e.what());
-        }
     }
 
   private:
@@ -206,7 +174,11 @@ struct Downloader {
         auto ans = send_request("started");
         std::istringstream ыы(ans.data);
         BencodeVal resp_decoded = read_bencode(ыы);
-        interval = resp_decoded.get_dict().at("interval").get_int();
+        try {
+            interval = resp_decoded.get_dict().at("interval").get_int();
+        } catch (const std::exception &e) {
+            interval = 30;
+        }
         update_peer_list(resp_decoded.get_dict().at("peers").get_str());
     }
 
@@ -253,6 +225,11 @@ struct Downloader {
                 },
                 asio::detached);
         }
+    }
+
+    void reconnect_peers() {
+        connected_peers.clear();
+        spdlog::info("[{}] Reconnecting to peers", ts.torrent.info_hash);
     }
 };
 

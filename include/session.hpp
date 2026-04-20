@@ -16,9 +16,6 @@ struct TorrentSession {
 
     explicit TorrentSession(asio::io_context &ioc, Torrent t)
         : ctx(ioc), torrent_state(t), downloader(torrent_state, ctx) {}
-    ~TorrentSession() {
-        torrent_state.try_save(fs::path(torrent_state.torrent.info_hash + ".state"));
-    }
 };
 
 struct App {
@@ -50,18 +47,19 @@ struct App {
 
         auto *dl = &sessions.back().downloader;
         dl->on_complete = [this]() {
-        // проверяем все ли торренты готовы
-        bool all_done = true;
-        for (auto& s : sessions) {
-            if (!s.torrent_state.is_done()) {
-                all_done = false;
-                break;
+            // проверяем все ли торренты готовы
+            bool all_done = true;
+            for (auto &s : sessions) {
+                if (!s.torrent_state.is_done()) {
+                    all_done = false;
+                    break;
+                }
             }
-        }
-        if (all_done) {
-            work_guard.reset();
-        }
-    };
+            if (all_done) {
+                spdlog::debug("Work guard reset");
+                work_guard.reset();
+            }
+        };
         asio::co_spawn(
             ctx, [dl]() -> awaitable<void> { co_await dl->run(); }, asio::detached);
         spdlog::debug("Spawned downloader.run()");
