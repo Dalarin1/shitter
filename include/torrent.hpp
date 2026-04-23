@@ -220,47 +220,6 @@ std::vector<Peer> parse_peers(const std::string &peers_binary);
 
 std::string find_info_hash(std::istream &file);
 
-struct PeerConnection {
-    Peer peer;
-    Conn conn;
-    TorrentState &torrent_state;
-    time_t last_keep_alive;
-
-    bool handshook = false;
-
-    bool am_choking = true;
-    bool am_interested = false;
-    bool peer_choking = true;
-    bool peer_interested = false;
-
-    std::vector<bool> bitfield;
-
-    PeerConnection() = delete;
-    PeerConnection(PeerConnection &&other) noexcept;
-    PeerConnection(Peer peer, TorrentState &ts);
-
-    void send_handshake();
-    Message recv_handshake();
-    bool do_handshake();
-
-    Message recv_message();
-
-    void send_interested();
-    void send_not_interested();
-    void send_keep_alive();
-    void send_request(uint32_t index, uint32_t begin, uint32_t length);
-    void send_bitfield();
-    void send_have(uint32_t index);
-    void send_unchoke();
-    void handle_piece(const Message &msg);
-    void handle_piece_v2(const Message &msg);
-    void run();
-    void request_next_piece();
-};
-
-std::vector<PeerConnection> connect_to_peers(const std::vector<Peer> &peers,
-                                             TorrentState &ts, uint16_t conn_count);
-
 void print_torrent(const Torrent &torrent);
 
 #endif // INCLUDE_TORRENT_HPP_

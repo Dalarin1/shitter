@@ -58,4 +58,9 @@ struct HttpConn {
 
     response get(const std::wstring &path);
 };
+
+struct HttpConn2 {
+    
+};
+
 #endif // INCLUDE_PROTOCOL_HPP_

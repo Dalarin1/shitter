@@ -79,37 +79,7 @@ Conn::Conn(Conn &&other) noexcept
     other.sock = INVALID_SOCKET;
     other.result = nullptr;
 }
-// переписать в неблокирующий коннект с таймаутом 2 секунды
-// Conn::Conn(const std::string &_host, const std::string &_port)
-//     : host(_host), port(_port) {
-//     init_wsa();
-//     addrinfo hints{};
-//     hints.ai_family = AF_UNSPEC;
-//     hints.ai_socktype = SOCK_STREAM;
-//     hints.ai_protocol = IPPROTO_TCP;
 
-//     int rc = getaddrinfo(host.c_str(), port.c_str(), &hints, &result);
-//     if (rc != 0)
-//         throw std::runtime_error("getaddrinfo: " + std::to_string(rc));
-
-//     for (addrinfo *p = result; p != nullptr; p = p->ai_next) {
-//         sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-//         if (sock == INVALID_SOCKET)
-//             continue;
-//         DWORD timeout = 1000;
-//         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
-//         setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
-//         if (connect(sock, p->ai_addr, (int)p->ai_addrlen) == 0) {
-//             spdlog::debug("Connected to {}:{}", host, port);
-//             return;
-//         }
-//         closesocket(sock);
-//         sock = INVALID_SOCKET;
-//     }
-//     freeaddrinfo(result);
-//     result = nullptr;
-//     throw std::runtime_error("Could not connect to any addr");
-// }
 Conn::Conn(const std::string &_host, const std::string &_port)
     : host(_host), port(_port) {
     init_wsa();
@@ -133,10 +103,6 @@ Conn::Conn(const std::string &_host, const std::string &_port)
             continue;
         }
 
-        //		if (connect(sock, p->ai_addr, (int)p->ai_addrlen) == 0) {
-        //			spdlog::debug("Connected to {}:{}", host, port);
-        //			return;
-        //		}
         if (connect(sock, p->ai_addr, (int)p->ai_addrlen) == SOCKET_ERROR) {
             if (WSAGetLastError() != WSAEWOULDBLOCK) {
                 closesocket(sock);
