@@ -65,7 +65,7 @@ URL parse_url(const std::string &url) {
         res.host = url.substr(pos);
         res.path = "/";
     } else {
-        res.host = url.substr(pos, host_end);
+        res.host = url.substr(pos, host_end - pos);
         res.path = url.substr(host_end);
     }
     return res;

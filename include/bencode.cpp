@@ -168,7 +168,7 @@ std::string encode_bencode(const BencodeVal& val){
     return out;
 }
 
-void print_bencodeval(const BencodeVal &bv, std::ostream& out=std::cout, bool _endl = true) {
+void print_bencodeval(const BencodeVal &bv, std::ostream& out, bool _endl) {
     if (bv.is_int()) {
         out << bv.get_int();
     }
