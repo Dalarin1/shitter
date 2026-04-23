@@ -1,16 +1,17 @@
-#ifndef INCLUDE_SHA1_HPP_
-#define INCLUDE_SHA1_HPP_
+#include <openssl\sha.h>
 
-#include <windows.h>
-#include <iomanip>
-#include <sstream>
-#include <vector>
-#include <wincrypt.h>
-#include <cstdint>
+template <typename DS> std::string sha1(const DS &data) {
+    ;
+    std::string res(20, '\0');
+    SHA1(reinterpret_cast<const unsigned char *>(data.data()), data.size(),
+         reinterpret_cast<unsigned char *>(res.data()));
+    return res;
+}
+template <typename DS> std::string sha1_hex(const DS &data) {
+    std::string sha_raw = sha1(data);
 
-std::string sha1(const std::string &input);
-std::string sha1_hex(const std::string & input);
-std::string sha1(const std::vector<uint8_t>& input);
-std::string sha1_hex(const std::vector<uint8_t>& input);
-
-#endif // INCLUDE_SHA1_HPP_
+    std::ostringstream ss;
+    for (unsigned char c : sha_raw)
+        ss << std::hex << std::setw(2) << std::setfill('0') << (int)c;
+    return ss.str();
+}
