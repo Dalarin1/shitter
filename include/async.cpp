@@ -4,6 +4,7 @@
 awaitable<AsyncConn> AsyncConn::connect(asio::io_context &ctx, Peer peer) {
     AsyncConn c(ctx);
     asio::ip::tcp::endpoint ep(asio::ip::address_v4(peer.ntohl_ip()), peer.port);
+      
     co_await c.sock.async_connect(ep, asio::use_awaitable);
     co_return std::move(c);
 }
@@ -25,6 +26,9 @@ awaitable<void> AsyncConn::recv_into(void *buf, uint64_t size) {
 
 awaitable<std::shared_ptr<PeerConn2>> PeerConn2::create(asio::io_context &ioc,
                                                                Peer p, TorrentState &ts) {
+    if(ts.is_done()){
+        throw new std::runtime_error("TorrentState is done, abort connection");
+    }
     auto c = std::make_shared<PeerConn2>(
         PeerConn2{p, co_await AsyncConn::connect(ioc, p), ts});
     co_return c;

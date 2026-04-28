@@ -35,9 +35,9 @@ struct SeedConn {
 };
 
 struct SeedServer {
-    tcp::acceptor acceptor;
     asio::io_context &ioc;
-
+    tcp::acceptor acceptor;
+    
     SeedServer(asio::io_context &ioc, uint16_t port)
         : ioc(ioc), acceptor(ioc, tcp::endpoint(tcp::v4(), port)) {}
 

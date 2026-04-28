@@ -115,7 +115,7 @@ Conn::Conn(const std::string &_host, const std::string &_port)
             FD_ZERO(&setE);
             FD_SET(sock, &setE);
 
-            timeval time_out = {0};
+            timeval time_out = {0, 0};
             time_out.tv_sec = 3;
             time_out.tv_usec = 0;
 

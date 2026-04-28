@@ -5,10 +5,8 @@
 #include "session.hpp"
 
 int main() {
-    spdlog::set_level(spdlog::level::debug);
+    // spdlog::set_level(spdlog::level::debug);
     
-    App app;
-    app.add_torrent(
-        fs::path(L"test/Высокая кухня - Похлебкин В. В. - ЧАЙ [2007, PDF, RUS] "
-                 L"[rutracker-605222].torrent"));
+    App app;    
+    app.add_torrent(fs::current_path() / "test" / fs::path(L"Высокая кухня - Похлебкин В. В. - ЧАЙ [2007, PDF, RUS] [rutracker-605222].torrent"));
 }

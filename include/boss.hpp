@@ -13,6 +13,7 @@
 
 struct Downloader {
     TorrentState &ts;
+    asio::io_context &ctx;
     std::string announce_host;
     std::string announce_path;
     HttpConn http_tracker_conn;
@@ -22,7 +23,7 @@ struct Downloader {
     std::string client_id = "-BT7105-123456789101";
     uint16_t port = 6888;
     int interval = 30;
-    asio::io_context &ctx;
+    
     std::chrono::steady_clock::time_point last_tracker_contact;
     std::chrono::steady_clock::time_point last_progress;
     std::chrono::steady_clock::time_point last_saved_progress;

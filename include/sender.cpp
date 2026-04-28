@@ -177,6 +177,16 @@ awaitable<void> SeedConn::run() {
         case MessageType::Request:
             co_await handle_request(msg);
             break;
+        case MessageType::Choke:
+        case MessageType::Unchoke:
+        case MessageType::Not_Interested:
+        case MessageType::Have:
+        case MessageType::Bitfield:
+        case MessageType::Piece:
+        case MessageType::Cancel:
+        case MessageType::Port:
+        case MessageType::Handshake:
+            break;
         }
     }
 }
@@ -204,13 +214,13 @@ awaitable<void> SeedConn::handle_request(const Message &msg) {
 
 awaitable<void> SeedServer::run() {
     std::cout << "Server started, waiting for connections..." << std::endl;
-    
+
     for (;;) {
         std::cout << "Waiting for new connection..." << std::endl;
-        
+
         auto sock = co_await acceptor.async_accept(asio::use_awaitable);
         auto peer = Peer::from_endpoint(sock.remote_endpoint());
-        
+
         std::cout << "New connection from: " << peer.str() << std::endl;
 
         auto conn = std::make_shared<SeedConn>(SeedConn{

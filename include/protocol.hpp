@@ -198,7 +198,6 @@ struct AsyncHttpConn {
             spdlog::error("ERRAH while building resolver: {}", e.what());
         }
     }
-    response get(std::string request) {}
 };
 
 #endif // INCLUDE_PROTOCOL_HPP_

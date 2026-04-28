@@ -38,7 +38,7 @@ struct Torrent {
         std::string name;                // Name to save the file/directory as.
         uint64_t piece_length;           // Number of bytes in each piece
         std::vector<std::string> pieces; // Each pieces[i] represents SHA1 of _i_th piece
-        uint64_t length;                 // Length of single file; -1 if multiple files
+        uint64_t length;                 // Length of single file; 0 if multiple files
         std::vector<file> files;         // If only single file present, files.size = 0
     } info;
 
@@ -113,10 +113,10 @@ struct PieceOrderer {
 
     int get_next(const std::vector<bool> &bitfield) {
         int best = -1;
-        for (int i = 0; i < counts.size(); i++) {
+        for (size_t i = 0; i < counts.size(); i++) {
             if (!bitfield[i] && counts[i] > 0)
                 if (best == -1 || counts[i] < counts[best])
-                    best = i;
+                    best = static_cast<int>(i);
         }
         return best;
     }

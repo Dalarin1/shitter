@@ -1,7 +1,5 @@
 #ifndef INCLUDE_ASYNC_HPP_
 #define INCLUDE_ASYNC_HPP_
-
-#define ASIO_HAS_CO_AWAIT
 #include <coroutine>
 #include "torrent.hpp"
 #include "asio.hpp"
@@ -43,7 +41,7 @@ struct PeerConn2 {
     bool peer_choking = true;
     bool peer_interested = false;
 
-    std::vector<bool> bitfield;
+    std::vector<bool> bitfield{};
 
     static awaitable<std::shared_ptr<PeerConn2>> create(asio::io_context &ioc, Peer p,
                                                         TorrentState &ts);

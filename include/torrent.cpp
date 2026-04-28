@@ -118,7 +118,6 @@ std::string find_info_hash(std::istream &file) {
 Torrent::Torrent(fs::path filename) {
     auto file = std::ifstream(filename, std::ios::binary);
     BencodeVal data = read_bencode(file);
-    file.close();
 
     if (!data.is_dict())
         throw std::runtime_error(
@@ -154,7 +153,7 @@ Torrent::Torrent(fs::path filename) {
         total_length = info.length;
         spdlog::info("Single-file mode, size: {} bytes", total_length);
     } else
-        info.length = -1;
+        info.length = 0;
 
     if (info_dict.count("files") > 0) {
         size_t len = 0;
@@ -235,7 +234,7 @@ void TorrentState::init_torfiles(fs::path where) {
     return;}
 
     // multi-file
-    if (torrent.info.length == -1) {
+    if (torrent.info.length == 0) {
 
         size_t offset = 0;
         for (auto &file : torrent.info.files) {

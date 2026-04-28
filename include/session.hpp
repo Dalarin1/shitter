@@ -70,7 +70,7 @@ struct App {
     ~App() {
         // work_guard.reset();
 
-        for (int i = 0; i < download_threads.size(); i++) {
+        for (size_t i = 0; i < download_threads.size(); i++) {
             if (download_threads[i].joinable()) {
                 download_threads[i].join();
             }
