@@ -74,7 +74,7 @@ int TorrentState::next_missing_piece(const std::vector<bool> &peer_bitfield) con
             return (int)i;
         }
     }
-    if(!is_done()){
+    if (!is_done()) {
         spdlog::error("Torrent state is not done, but next_missing_piece returned -1");
     }
     return -1;
@@ -231,7 +231,8 @@ bool TorrentState::preallocate_files(fs::path where) {
 void TorrentState::init_torfiles(fs::path where) {
     if (!torfiles.empty()){
         spdlog::error("init_torfiles: torfiles empty");
-    return;}
+        return;
+    }
 
     // multi-file
     if (torrent.info.length == 0) {
@@ -394,7 +395,7 @@ void TorrentState::clear_downloading_pieces() {
         //     std::chrono::duration_cast<std::chrono::seconds>(now - i.last_interacted)
         //         .count();
         // if (i.state == PieceStatus::State::Downloading && elapsed >= 5) {
-        if(i.state == PieceStatus::State::Downloading){
+        if (i.state == PieceStatus::State::Downloading) {
             i.state = PieceStatus::State::Missing;
             i.buffer.clear();
             i.downloaded = 0;
