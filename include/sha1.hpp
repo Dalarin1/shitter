@@ -1,4 +1,4 @@
-#include <openssl\sha.h>
+#include <openssl/sha.h>
 
 template <typename DS> std::string sha1(const DS &data) {
     ;

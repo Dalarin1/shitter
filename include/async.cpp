@@ -230,16 +230,16 @@ awaitable<void> PeerConn2::handle_piece(const Message &msg) {
         tf.descriptor.write(
             reinterpret_cast<const char *>(completed_buffer.data() + buf_offset),
             to_write, file_offset);
-#else 
-    {
-        std::lock_guard<std::mutex> flock(tf.mut); // мьютекс только на этот файл
+#else
+        {
+            std::lock_guard<std::mutex> flock(tf.mut); // мьютекс только на этот файл
 
-        tf.descriptor.seekp(file_offset, std::ios::beg);
-        tf.descriptor.write(
-            reinterpret_cast<const char *>(completed_buffer.data() + buf_offset),
-            to_write);
-        tf.descriptor.flush();
-    }
+            tf.descriptor.seekp(file_offset, std::ios::beg);
+            tf.descriptor.write(
+                reinterpret_cast<const char *>(completed_buffer.data() + buf_offset),
+                to_write);
+            tf.descriptor.flush();
+        }
 
 #endif
 
@@ -326,12 +326,13 @@ awaitable<void> PeerConn2::run() {
                 break;
 
             if (!piece_done && !was_done) {
-                // кусок не завершён — следующий блок
-                uint32_t next = torrent_state.pieces[msg.index].downloaded;
-                uint32_t remain = torrent_state.pieces[msg.index].total_size - next;
-                uint32_t block = std::min(remain, (uint32_t)16384);
-                if (block > 0)
-                    co_await send_request(msg.index, next, block);
+                // // кусок не завершён — следующий блок
+                //uint32_t next = torrent_state.pieces[msg.index].downloaded;
+                //uint32_t remain = torrent_state.pieces[msg.index].total_size - next;
+                //uint32_t block = std::min(remain, (uint32_t)16384);
+                //if (block > 0)
+                //    co_await send_request(msg.index, next, block);
+                break;
             } else {
                 // кусок завершён — следующий кусок
                 co_await request_next_piece();
@@ -366,5 +367,8 @@ awaitable<void> PeerConn2::request_next_piece() {
         torrent_state.pieces[piece].state = PieceStatus::State::Downloading;
         torrent_state.pieces[piece].last_interacted = std::chrono::steady_clock::now();
     }
-    co_await send_request(piece, 0, 16384);
+    for(size_t i = 0; i < torrent_state.pieces[piece].total_size; i+= 16384){
+        co_await send_request(piece, i, std::min(torrent_state.pieces[piece].total_size - i, 16384ul));
+    }
+    //co_await send_request(piece, 0, 16384);
 }

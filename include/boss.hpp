@@ -9,7 +9,7 @@
 #include "async.hpp"
 #include "defer.hpp"
 
-#define THREAD_COUNT 2
+#define THREAD_COUNT 4
 
 struct Downloader {
     TorrentState &ts;
@@ -43,7 +43,7 @@ struct Downloader {
         defer({
             spdlog::info("First defer");
             try {
-                ts.try_save(fs::path(ts.torrent.info_hash + ".state"));
+                ts.try_save(fs::path(ts.torrent.info_hash + ".state"), peer_list);
             } catch (const std::exception &e) {
                 spdlog::error("Failed to save state: {}", e.what());
             }
@@ -56,6 +56,8 @@ struct Downloader {
                 on_complete();
             }
         });
+
+        // ts.try_load(fs::current_path() / fs::path(ts.torrent.info_hash + ".state"), peer_list);
 
         if (ts.is_done()) {
             spdlog::warn("Torrent already done, aborting");
@@ -128,7 +130,7 @@ struct Downloader {
                                     .count();
             if (save_elapsed > 10) {
                 try {
-                    ts.try_save(fs::path(ts.torrent.info_hash + ".state"));
+                    ts.try_save(fs::path(ts.torrent.info_hash + ".state"), peer_list);
                 } catch (const std::exception &e) {
                     spdlog::error("Failed to save state: {}", e.what());
                 }
@@ -204,10 +206,8 @@ struct Downloader {
 
     void spawn_new_peers() {
         spdlog::debug("Spawning new peers");
-        int n = 0;
         for (auto peer : peer_list) {
             if (connected_peers.count(peer)) {
-                n++;
                 continue;
             }
 

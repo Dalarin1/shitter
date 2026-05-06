@@ -283,8 +283,8 @@ void TorrentState::init_torfiles(fs::path where) {
 }
 
 // --- try_save
-bool TorrentState::try_save(fs::path filename = "") {
-    std::ofstream file(filename == "" ? torrent.info_hash + ".state" : filename,
+bool TorrentState::try_save(fs::path filename, const std::set<Peer, PeerComparer>& peers) {
+    std::ofstream file(filename == "" ? fs::path(torrent.info_hash + ".state") : filename,
                        std::ios::binary);
     if (!file) {
         spdlog::error("Cannot save Torrent State to file! Aborting");
@@ -311,6 +311,49 @@ bool TorrentState::try_save(fs::path filename = "") {
         file.write(reinterpret_cast<const char *>(&i.downloaded), sizeof(uint32_t));
         file.write(reinterpret_cast<const char *>(&i.total_size), sizeof(uint32_t));
     }
+    // size_t peer_count = peers.size();
+    // file.write(reinterpret_cast<const char *>(&peer_count), sizeof(size_t));
+    // for(const auto& peer : peers){
+    //     file.write(reinterpret_cast<const char *>(peer.ip), 4 * sizeof(uint8_t));
+    //     file.write(reinterpret_cast<const char *>(peer.port), sizeof(uint16_t));
+    // }
+    return true;
+}
+
+bool TorrentState::try_load(fs::path filepath, std::set<Peer, PeerComparer>& peers) {
+    std::ifstream file(filepath, std::ios::binary);
+    if (!file) {
+        spdlog::error("Cannot open file {}", filepath.string());
+        return false;
+    }
+    file.read(reinterpret_cast<char *>(&files_built), sizeof(bool));
+    size_t pieces_count;
+    file.read(reinterpret_cast<char *>(&pieces_count), sizeof(size_t));
+    pieces.resize(pieces_count);
+    for (size_t i = 0; i < pieces_count; i++) {
+        file.read(reinterpret_cast<char *>(&pieces[i].state), sizeof(PieceStatus::State));
+        size_t size;
+        file.read(reinterpret_cast<char *>(&size), sizeof(size_t));
+        if (size > 0) {
+            pieces[i].buffer.resize(size);
+            file.read(reinterpret_cast<char *>(pieces[i].buffer.data()), size);
+        }
+        file.read(reinterpret_cast<char *>(&pieces[i].downloaded), sizeof(uint32_t));
+        file.read(reinterpret_cast<char *>(&pieces[i].total_size), sizeof(uint32_t));
+    }
+    // size_t peer_count;
+    // file.read(reinterpret_cast<char*>(&peer_count), sizeof(size_t));
+    // for(size_t i = 0; i < peer_count; i++){
+    //     uint8_t ip[4];
+    //     uint16_t port;
+
+    //     file.read(reinterpret_cast<char*>(&ip), 4 * sizeof(uint8_t));
+    //     file.read(reinterpret_cast<char*>(&port), sizeof(uint16_t));
+
+    //     peers.emplace(
+    //         Peer(ip, port)
+    //     );
+    // }
     return true;
 }
 
@@ -354,7 +397,7 @@ std::vector<uint8_t> TorrentState::get_piece_by_index(size_t index) const {
     while (remain > 0 && it != torfiles.end()) {
         TorFile &tf = **it;
         size_t file_offset = piece_global_offset - tf.global_offset;
-        size_t to_read = std::min(remain, tf.size - file_offset);
+        size_t to_read = std::min(remain, (uint64_t)(tf.size - file_offset));
 
 #ifdef USING_SFILE
         tf.descriptor.read(reinterpret_cast<char *>(buffer.data() + buff_offset), to_read,

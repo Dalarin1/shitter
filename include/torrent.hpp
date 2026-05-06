@@ -21,6 +21,9 @@
 
 namespace fs = std::filesystem;
 
+struct Peer;
+struct PeerComparer;
+
 inline std::string u32_to_str(uint32_t val) {
     uint32_t net_val = htonl(val);
     return std::string((char *)&net_val, 4);
@@ -155,9 +158,9 @@ struct TorrentState {
 
     bool preallocate_files(fs::path where);
     // сохранение и загрузка из файла
-    bool try_save(fs::path file);
+    bool try_save(fs::path file, const std::set<Peer, PeerComparer>& peers);
+    bool try_load(fs::path file, std::set<Peer, PeerComparer>& peers);
     bool try_load(fs::path file);
-
     // отдача
     std::vector<uint8_t> get_piece_by_index(size_t index) const;
     void clear_downloading_pieces();
@@ -205,6 +208,14 @@ struct Peer {
     std::string str() const;
 
     static Peer from_endpoint(const asio::ip::tcp::endpoint &ep);
+    Peer() = default;
+    explicit Peer(uint8_t* _ip, uint16_t _port) {
+        ip[0] = _ip[0];
+        ip[1] = _ip[1];
+        ip[2] = _ip[2];
+        ip[3] = _ip[3];
+        port = _port;
+    }
 };
 
 struct PeerComparer {

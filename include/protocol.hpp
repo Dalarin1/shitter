@@ -4,11 +4,9 @@
 #include <string>
 #include <vector>
 #include <sstream>
-#include <ws2tcpip.h>
-#include <winhttp.h>
 #include "asio.hpp"
-#include "asio\ssl.hpp"
-#include "spdlog\spdlog.h"
+#include "asio/ssl.hpp"
+#include "spdlog/spdlog.h"
 using tcp = asio::ip::tcp;
 using asio::awaitable;
 
@@ -27,42 +25,6 @@ struct URL {
 };
 URL parse_url(const std::string &url);
 
-struct Conn {
-    SOCKET sock = INVALID_SOCKET;
-    addrinfo *result = nullptr;
-    std::string host;
-    std::string port;
-
-    Conn(Conn &&other) noexcept;
-    Conn(const std::string &_url);
-    Conn(const std::string &_host, const std::string &_port);
-
-    ~Conn();
-
-    static void init_wsa();
-    static void cleanup_wsa();
-
-    void send_all(const std::string &_request);
-    std::string recv_all();
-};
-
-struct HttpConn {
-
-    struct response {
-        bool success;
-        std::string data;
-    };
-
-    HINTERNET hSession = nullptr;
-    HINTERNET hConnect = nullptr;
-    HINTERNET hRequest = nullptr;
-
-    HttpConn(const std::wstring &host, INTERNET_PORT port = INTERNET_DEFAULT_HTTP_PORT);
-
-    ~HttpConn();
-
-    response get(const std::wstring &path);
-};
 
 struct AsyncHttpConn {
     asio::io_context &ctx;
@@ -192,10 +154,11 @@ struct AsyncHttpConn {
                 }
             } catch (std::exception &e) {
                 spdlog::error("Cant GET to dest address: {}", e.what());
-                co_return response{false, 0, "SHYUSH"};
+                co_return response{false, 0, "Cant GET to dest address"};
             }
         } catch (std::exception &e) {
             spdlog::error("ERRAH while building resolver: {}", e.what());
+            co_return response{false, 0, "RRAH while building resolver"};
         }
     }
 };

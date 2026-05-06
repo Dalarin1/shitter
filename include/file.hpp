@@ -118,11 +118,11 @@ struct SFile {
 
     SFile() = default;
     SFile(const std::filesystem::path &path, unsigned int flags) {
-        this.open(path, flags);
+        this->open(path, flags);
     }
     ~SFile() {
         if (fd != -1)
-            close(fd);
+            ::close(fd);
     }
 
     bool read(char *buffer, uint64_t size, uint64_t offset) {
@@ -142,7 +142,7 @@ struct SFile {
     SFile &operator=(SFile &&other) noexcept {
         if (this != &other) {
             if (fd != -1)
-                close(fd);
+                ::close(fd);
             fd = other.fd;
             other.fd = -1;
         }
@@ -156,9 +156,9 @@ struct SFile {
     }
 
     bool open(const std::filesystem::path& filepath, unsigned int flags) {
-        this.close();
+        this->close();
         path = filepath;
-        unsigned int mode;
+        unsigned int mode = 0;
 
         if (flags & SFILE_READ) {
             if (flags & SFILE_WRITE) {
@@ -173,7 +173,7 @@ struct SFile {
         }
         mode |= O_CREAT;
 
-        fd = open(path.string().c_str(), mode, 0664);
+        fd = ::open(path.string().c_str(), mode, 0664);
         if (fd == -1){
             spdlog::error("Cannot open file {}", path.string());
             return false;

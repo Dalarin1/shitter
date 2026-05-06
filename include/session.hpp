@@ -27,10 +27,10 @@ struct App {
 
     App() : work_guard(asio::make_work_guard(ctx)), uploader(ctx, 6888) {
         spdlog::debug("App built");
-        for (short i = 0; i < THREAD_COUNT * 2; i++) {
+        for (short i = 0; i < THREAD_COUNT; i++) {
             download_threads.emplace_back([this]() { ctx.run(); });
         }
-        spdlog::debug("Started {} threads", THREAD_COUNT * 2);
+        spdlog::debug("Started {} threads", THREAD_COUNT);
 
         // asio::co_spawn(
         //     ctx, [&]() -> awaitable<void> { co_await uploader.run(); }, asio::detached);
