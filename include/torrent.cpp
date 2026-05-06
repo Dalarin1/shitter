@@ -229,7 +229,7 @@ bool TorrentState::preallocate_files(fs::path where) {
 // ─── init_torfiles ─────────────────────────────────────────────────────────
 
 void TorrentState::init_torfiles(fs::path where) {
-    if (!torfiles.empty()){
+    if (!torfiles.empty()) {
         spdlog::error("init_torfiles: torfiles empty");
         return;
     }
@@ -246,7 +246,7 @@ void TorrentState::init_torfiles(fs::path where) {
             // make torfile
             auto tf = std::make_unique<TorFile>();
 #ifdef USING_SFILE
-            tf->descriptor = SFile(file_path);
+            tf->descriptor = SFile(file_path, SFILE_READ | SFILE_WRITE);
 #else
             spdlog::debug("Creating file {}", file_path.string());
             tf->descriptor =
@@ -269,7 +269,7 @@ void TorrentState::init_torfiles(fs::path where) {
     fs::path file_path = where / torrent.info.name;
     auto tf = std::make_unique<TorFile>();
 #ifdef USING_SFILE
-    tf->descriptor = SFile(file_path.string());
+    tf->descriptor = SFile(file_path, SFILE_READ | SFILE_WRITE);
 #else
     spdlog::debug("Creating file {}", file_path.string());
     tf->descriptor = std::fstream(file_path, std::ios::in | std::ios::out |
@@ -344,11 +344,13 @@ std::vector<uint8_t> TorrentState::get_piece_by_index(size_t index) const {
     uint64_t remain = pieces[index].total_size;
     std::vector<uint8_t> buffer(remain);
     uint64_t buff_offset = 0;
+
     // найти первый файл, с оффсетом <= оффсета куска
     auto it = torfiles.lower_bound(piece_global_offset);
     if (it != torfiles.end()) {
         --it;
     }
+
     while (remain > 0 && it != torfiles.end()) {
         TorFile &tf = **it;
         size_t file_offset = piece_global_offset - tf.global_offset;
@@ -387,19 +389,25 @@ uint64_t TorrentState::downloaded() const {
 
 void TorrentState::clear_downloading_pieces() {
     std::lock_guard<std::mutex> lock(pieces_mutex);
-    spdlog::warn("Clearing downloading pieces");
-    // auto now = std::chrono::steady_clock::now();
+    spdlog::debug("Clearing downloading pieces");
 
     for (auto &i : pieces) {
-        // auto elapsed =
-        //     std::chrono::duration_cast<std::chrono::seconds>(now - i.last_interacted)
-        //         .count();
-        // if (i.state == PieceStatus::State::Downloading && elapsed >= 5) {
         if (i.state == PieceStatus::State::Downloading) {
             i.state = PieceStatus::State::Missing;
             i.buffer.clear();
             i.downloaded = 0;
         }
+    }
+}
+
+void TorrentState::set_descriptors_to_readonly() {
+    for (auto &i : torfiles) {
+#ifdef USING_SFILE
+        i->descriptor.change_mode(SFILE_READ);
+#else
+        i->descriptor.close();
+        i->descriptor = std::ifstream(i->path, std::ios::binary);
+#endif
     }
 }
 

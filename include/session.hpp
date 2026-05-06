@@ -58,6 +58,7 @@ struct App {
             if (all_done) {
                 spdlog::debug("Work guard reset");
                 work_guard.reset();
+                ctx.stop();
             }
         };
         asio::co_spawn(

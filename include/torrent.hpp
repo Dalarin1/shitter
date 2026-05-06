@@ -16,6 +16,8 @@
 #include "sha1.hpp"
 #include "file.hpp"
 #include "asio.hpp"
+#undef min
+#undef max
 
 namespace fs = std::filesystem;
 
@@ -111,16 +113,18 @@ struct PieceOrderer {
             counts[i]--;
     }
 
-    int get_next(const std::vector<bool> &bitfield) {
-        int best = -1;
-        for (size_t i = 0; i < counts.size(); i++) {
-            if (!bitfield[i] && counts[i] > 0)
-                if (best == -1 || counts[i] < counts[best])
-                    best = static_cast<int>(i);
+    //
+    int get_next(const std::vector<bool> &bitfield, const std::vector<PieceStatus>& pieces) {
+        int next = INT_MAX;
+        for(size_t i = 0; i < bitfield.size(); i++){
+            if(counts[i] > 0 && bitfield[i] && pieces[i].state == PieceStatus::State::Missing){
+                next = std::min(next, counts[i]);
+            }
         }
-        return best;
+        return next == INT_MAX? -1 : next;
     }
 };
+
 struct ArrayHash {
     size_t operator()(const std::array<uint8_t, 20>& a) const {
         size_t seed = 0;
@@ -129,6 +133,7 @@ struct ArrayHash {
         return seed;
     }
 };
+
 struct TorrentState {
     bool files_built = false;
 
@@ -158,6 +163,7 @@ struct TorrentState {
     void clear_downloading_pieces();
     uint64_t downloaded() const;
 
+    void  set_descriptors_to_readonly();
   private:
     void init_torfiles(fs::path where);
 };

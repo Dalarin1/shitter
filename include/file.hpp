@@ -19,20 +19,20 @@
 // clang-format on
 #include "spdlog/spdlog.h"
 
+#define SFILE_READ 0x1
+#define SFILE_WRITE 0x10
+
 // Uncomment to use SFile instead of std::fstream
 #define USING_SFILE
 
 #ifdef _WIN32
 struct SFile {
     HANDLE handle = INVALID_HANDLE_VALUE;
+    std::filesystem::path path;
 
     SFile() = default;
-    SFile(const std::filesystem::path &filepath) {
-        handle = CreateFileW(filepath.wstring().c_str(), GENERIC_READ | GENERIC_WRITE,
-                             FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
-                             FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (handle == INVALID_HANDLE_VALUE)
-            spdlog::error("Cannot open file {}", filepath.string());
+    SFile(const std::filesystem::path &filepath, unsigned int flags) {
+        open(filepath, flags);
     }
     ~SFile() {
         if (handle != INVALID_HANDLE_VALUE)
@@ -44,10 +44,13 @@ struct SFile {
         ov.Offset = static_cast<DWORD>(offset);
         ov.OffsetHigh = static_cast<DWORD>(offset >> 32);
         DWORD bytesRead = 0;
-        if (!ReadFile(handle, buffer, static_cast<DWORD>(size), &bytesRead, &ov))
+        if (!ReadFile(handle, buffer, static_cast<DWORD>(size), &bytesRead, &ov)) {
+            spdlog::error("ReadFile returned false");
             return false;
+        }
         return bytesRead == static_cast<DWORD>(size);
     }
+
     bool write(const char *buffer, uint64_t size, uint64_t offset) {
         OVERLAPPED ov = {};
         ov.Offset = static_cast<DWORD>(offset);
@@ -58,6 +61,7 @@ struct SFile {
     SFile(const SFile &) = delete;
     SFile &operator=(const SFile &) = delete;
     SFile &operator=(SFile &&other) noexcept {
+        // spdlog::info("SFile &operator=(SFile &&other)");
         if (this != &other) {
             if (handle != INVALID_HANDLE_VALUE)
                 CloseHandle(handle);
@@ -67,21 +71,54 @@ struct SFile {
         return *this;
     }
     SFile(SFile &&other) noexcept {
+        // spdlog::info("SFile(SFile &&other)");
         handle = other.handle;
         other.handle = INVALID_HANDLE_VALUE;
     }
+
+    inline void close() {
+        if (handle != INVALID_HANDLE_VALUE) {
+            CloseHandle(handle);
+            handle = INVALID_HANDLE_VALUE;
+        }
+    }
+
+    bool open(const std::filesystem::path& filepath, unsigned int flags) {
+        close();
+        path = filepath;
+
+        DWORD mode = 0;
+        if (flags & SFILE_READ) {
+            mode |= GENERIC_READ;
+        }
+        if (flags & SFILE_WRITE) {
+            mode |= GENERIC_WRITE;
+        }
+
+        handle = CreateFileW(filepath.wstring().c_str(), mode, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                             OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+
+        if (handle == INVALID_HANDLE_VALUE) {
+            spdlog::error("Cannot open file {}, reason: {}", filepath.string(), GetLastError());
+            return false;
+        }
+        return true;
+    }
+    inline void change_mode(unsigned int flags) { open(path, flags); }
+    inline bool is_open() { return handle != INVALID_HANDLE_VALUE; }
+
+  private:
 };
 
 #else // POSIX
 
 struct SFile {
     int fd = -1;
+    std::filesystem::path path;
 
     SFile() = default;
-    SFile(const std::filesystem::path &path) {
-        fd = open(path.string().c_str(), O_RDWR | O_CREAT, 0664);
-        if (fd == -1)
-            spdlog::error("Cannot open file {}", path.string());
+    SFile(const std::filesystem::path &path, unsigned int flags) {
+        this.open(path, flags);
     }
     ~SFile() {
         if (fd != -1)
@@ -111,6 +148,44 @@ struct SFile {
         }
         return *this;
     }
+    inline void close() {
+        if (fd != -1) {
+            ::close(fd);
+            fd = -1;
+        }
+    }
+
+    bool open(const std::filesystem::path& filepath, unsigned int flags) {
+        this.close();
+        path = filepath;
+        unsigned int mode;
+
+        if (flags & SFILE_READ) {
+            if (flags & SFILE_WRITE) {
+                mode = O_RDWR;
+            } else {
+                mode = O_RDONLY;
+            }
+        } else {
+            if (flags & SFILE_WRITE) {
+                mode = O_WRONLY;
+            }
+        }
+        mode |= O_CREAT;
+
+        fd = open(path.string().c_str(), mode, 0664);
+        if (fd == -1){
+            spdlog::error("Cannot open file {}", path.string());
+            return false;
+        }
+        return true;
+    }
+
+    inline void change_mode(unsigned int flags){
+        open(path, flags);
+    }
+
+    bool is_open() { return fd != -1; }
 };
 
 #endif // _WIN32

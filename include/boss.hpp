@@ -16,14 +16,13 @@ struct Downloader {
     asio::io_context &ctx;
     std::string announce_host;
     std::string announce_path;
-    HttpConn http_tracker_conn;
     AsyncHttpConn async_http_tracker_conn;
     std::set<Peer, PeerComparer> peer_list;
     std::set<Peer, PeerComparer> connected_peers;
     std::string client_id = "-BT7105-123456789101";
     uint16_t port = 6888;
     int interval = 30;
-    
+
     std::chrono::steady_clock::time_point last_tracker_contact;
     std::chrono::steady_clock::time_point last_progress;
     std::chrono::steady_clock::time_point last_saved_progress;
@@ -34,7 +33,6 @@ struct Downloader {
     Downloader(TorrentState &_ts, asio::io_context &_ctx)
         : ts(_ts), ctx(_ctx), announce_host(get_url_hostname(ts.torrent.announce_url)),
           announce_path(get_url_path(ts.torrent.announce_url)),
-          http_tracker_conn(std::wstring(announce_host.begin(), announce_host.end())),
           async_http_tracker_conn(_ctx, parse_url(ts.torrent.announce_url)),
           last_tracker_contact(std::chrono::steady_clock::now()),
           last_progress(std::chrono::steady_clock::now()),
@@ -43,6 +41,7 @@ struct Downloader {
     awaitable<void> run() {
         // сохраняем стейт в конце при выходе из функции
         defer({
+            spdlog::info("First defer");
             try {
                 ts.try_save(fs::path(ts.torrent.info_hash + ".state"));
             } catch (const std::exception &e) {
@@ -50,9 +49,16 @@ struct Downloader {
             }
         });
 
+        defer({ ts.set_descriptors_to_readonly(); });
+
+        defer({
+            if (on_complete) {
+                on_complete();
+            }
+        });
+
         if (ts.is_done()) {
             spdlog::warn("Torrent already done, aborting");
-            on_complete();
             co_return;
         }
 
@@ -63,7 +69,6 @@ struct Downloader {
                 started = true;
             } catch (const std::exception &e) {
                 spdlog::warn("Failed to notify tracker on startup: {}", e.what());
-                on_complete();
                 co_return;
             }
         }
@@ -141,22 +146,6 @@ struct Downloader {
         } catch (const std::exception &e) {
             spdlog::warn("Failed to notify tracker on shutdown: {}", e.what());
         }
-        on_complete();
-    }
-
-    HttpConn::response send_request(std::string event = "") {
-        // clang-format off
-        std::string path =
-            announce_path + 
-            "?info_hash=" + ts.torrent.urlencoded_info_hash +
-            "&peer_id=" + client_id + 
-            "&port=" + std::to_string(port) + 
-            "&uploaded=0" +
-            "&downloaded=" + std::to_string(ts.downloaded()) +
-            "&left=" + std::to_string(ts.torrent.total_length - ts.downloaded()) +
-            "&compact=1" + "&event=" + event;
-        // clang-format on
-        return http_tracker_conn.get(std::wstring(path.begin(), path.end()));
     }
 
     awaitable<AsyncHttpConn::response> async_send_request(std::string event = "") {
@@ -204,25 +193,6 @@ struct Downloader {
         BencodeVal resp_decoded = read_bencode(ыы);
         update_peer_list(resp_decoded.get_dict().at("peers").get_str());
         spdlog::debug("RET async_send_empty_and_recv_peers");
-    }
-
-    void send_start_and_recv_peers() {
-        auto ans = send_request("started");
-        std::istringstream ыы(ans.data);
-        BencodeVal resp_decoded = read_bencode(ыы);
-        try {
-            interval = resp_decoded.get_dict().at("interval").get_int();
-        } catch (const std::exception &e) {
-            interval = 30;
-        }
-        update_peer_list(resp_decoded.get_dict().at("peers").get_str());
-    }
-
-    void send_empty_and_recv_peers() {
-        auto ans = send_request();
-        std::istringstream ыы(ans.data);
-        BencodeVal resp_decoded = read_bencode(ыы);
-        update_peer_list(resp_decoded.get_dict().at("peers").get_str());
     }
 
     void update_peer_list(const std::string &peers_str) {

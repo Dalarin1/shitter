@@ -3,7 +3,6 @@ build.bat
 \test
 \net
 .clang-format
-build.py
 *.tmp
 todo.md
 *.state

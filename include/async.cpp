@@ -4,7 +4,7 @@
 awaitable<AsyncConn> AsyncConn::connect(asio::io_context &ctx, Peer peer) {
     AsyncConn c(ctx);
     asio::ip::tcp::endpoint ep(asio::ip::address_v4(peer.ntohl_ip()), peer.port);
-      
+
     co_await c.sock.async_connect(ep, asio::use_awaitable);
     co_return std::move(c);
 }
@@ -24,9 +24,9 @@ awaitable<void> AsyncConn::recv_into(void *buf, uint64_t size) {
     co_await asio::async_read(sock, asio::buffer(buf, size), asio::use_awaitable);
 }
 
-awaitable<std::shared_ptr<PeerConn2>> PeerConn2::create(asio::io_context &ioc,
-                                                               Peer p, TorrentState &ts) {
-    if(ts.is_done()){
+awaitable<std::shared_ptr<PeerConn2>> PeerConn2::create(asio::io_context &ioc, Peer p,
+                                                        TorrentState &ts) {
+    if (ts.is_done()) {
         throw new std::runtime_error("TorrentState is done, abort connection");
     }
     auto c = std::make_shared<PeerConn2>(
@@ -137,7 +137,8 @@ awaitable<void> PeerConn2::send_keep_alive() {
 }
 
 awaitable<void> PeerConn2::send_request(uint32_t index, uint32_t begin, uint32_t length) {
-    spdlog::debug("[{}] Requesting piece {} at {}, length = {}", peer.str(), index, begin, length);
+    spdlog::debug("[{}] Requesting piece {} at {}, length = {}", peer.str(), index, begin,
+                  length);
     std::string req = u32_to_str(13);
     req += static_cast<char>(6);
     req += u32_to_str(index);
@@ -156,7 +157,7 @@ awaitable<void> PeerConn2::send_bitfield() {
     co_await conn.send(msg);
 }
 
-awaitable<void> PeerConn2::send_have(uint32_t index){
+awaitable<void> PeerConn2::send_have(uint32_t index) {
     std::string payload;
     payload += u32_to_str(5);
     payload += static_cast<char>(4);
@@ -223,23 +224,24 @@ awaitable<void> PeerConn2::handle_piece(const Message &msg) {
         size_t file_offset = global_offset - tf.global_offset;
         size_t to_write = std::min(remain, tf.size - file_offset);
 
-        {
-            std::lock_guard<std::mutex> flock(tf.mut); // мьютекс только на этот файл
-
-            spdlog::info("[{}] Writing {} bytes in {}, pos: {}", peer.str(), completed_buffer.size(),
-                         tf.path.string(), file_offset);
+        spdlog::info("[{}] Writing {} bytes in {}, pos: {}", peer.str(),
+                     completed_buffer.size(), tf.path.string(), file_offset);
 #ifdef USING_SFILE
-            tf.descriptor.write(
-                reinterpret_cast<const char *>(completed_buffer.data() + buf_offset),
-                to_write, file_offset);
-#else
-            tf.descriptor.seekp(file_offset, std::ios::beg);
-            tf.descriptor.write(
-                reinterpret_cast<const char *>(completed_buffer.data() + buf_offset),
-                to_write);
-            tf.descriptor.flush();
+        tf.descriptor.write(
+            reinterpret_cast<const char *>(completed_buffer.data() + buf_offset),
+            to_write, file_offset);
+#else 
+    {
+        std::lock_guard<std::mutex> flock(tf.mut); // мьютекс только на этот файл
+
+        tf.descriptor.seekp(file_offset, std::ios::beg);
+        tf.descriptor.write(
+            reinterpret_cast<const char *>(completed_buffer.data() + buf_offset),
+            to_write);
+        tf.descriptor.flush();
+    }
+
 #endif
-        }
 
         remain -= to_write;
         buf_offset += to_write;
@@ -353,19 +355,6 @@ awaitable<void> PeerConn2::run() {
 }
 
 awaitable<void> PeerConn2::request_next_piece() {
-    // int piece;
-    // {
-    //     std::lock_guard lock(torrent_state.pieces_mutex);
-    //     // get_next и пометка Downloading — атомарно, чтобы два пира
-    //     // не схватили один и тот же кусок
-    //     piece = torrent_state.piece_orderer.get_next(bitfield);
-    //     spdlog::info("About to request piece {}", piece);
-    //     if (piece < 0)
-    //         co_return;
-    //     torrent_state.pieces[piece].state = PieceStatus::State::Downloading;
-    // }
-
-    // co_await send_request(piece, 0, 16384);
     int piece = torrent_state.next_missing_piece(bitfield);
     if (piece < 0)
         co_return; // нечего качать у этого пира
