@@ -19,12 +19,6 @@ awaitable<bool> SeedConn::do_handshake() {
     }
     std::array<uint8_t, 20> buf = std::array<uint8_t, 20>();
     for (int i = 0; i < 20; i++) {
-        // if (resp[28 + i] != torrent_state->torrent.info_hash_raw[i]) {
-        //     conn.sock.close();
-        //     co_return false;
-        // }
-        // считываем инфо-хэш. Если полученного хэша нет в torrent_map, то канец
-        // иначе - переопределяем свой торрент
         buf[i] = resp[28 + i];
     }
     if (!TorrentState::torrent_map.contains(buf)) {

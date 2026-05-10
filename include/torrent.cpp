@@ -1,5 +1,6 @@
 #include "torrent.hpp"
 #include "spdlog/spdlog.h"
+#include "defer.hpp"
 #undef min
 
 // ─── Peer ────────────────────────────────────────────────────────────────────
@@ -49,10 +50,12 @@ TorrentState::TorrentState(const Torrent &t)
 
     if (fs::exists(fs::path(torrent.info_hash + ".state"))) {
         bool success = try_load(fs::path(torrent.info_hash + ".state"));
+
         if (!success) {
             spdlog::error("State file loading failed; Creating torrent files");
             preallocate_files(fs::current_path());
         } else {
+            init_torfiles(fs::current_path());
             spdlog::info("State successfully loaded");
         }
     } else {
@@ -230,9 +233,10 @@ bool TorrentState::preallocate_files(fs::path where) {
 
 void TorrentState::init_torfiles(fs::path where) {
     if (!torfiles.empty()) {
-        spdlog::error("init_torfiles: torfiles empty");
+        spdlog::error("init_torfiles: torfiles not empty");
         return;
     }
+    defer({ files_built = true; });
 
     // multi-file
     if (torrent.info.length == 0) {
@@ -243,6 +247,7 @@ void TorrentState::init_torfiles(fs::path where) {
             for (auto &entry : file.path) {
                 file_path /= entry;
             }
+            fs::create_directories(file_path.parent_path());
             // make torfile
             auto tf = std::make_unique<TorFile>();
 #ifdef USING_SFILE
@@ -254,8 +259,9 @@ void TorrentState::init_torfiles(fs::path where) {
                                             std::ios::trunc);
 
 #endif
-
-            fs::resize_file(file_path, file.length);
+            if (!files_built) {
+                fs::resize_file(file_path, file.length);
+            }
             tf->global_offset = offset;
             tf->path = file_path;
             tf->size = file.length;
@@ -263,6 +269,7 @@ void TorrentState::init_torfiles(fs::path where) {
 
             torfiles.emplace(std::move(tf));
         }
+
         return;
     }
     // single-file
@@ -275,7 +282,9 @@ void TorrentState::init_torfiles(fs::path where) {
     tf->descriptor = std::fstream(file_path, std::ios::in | std::ios::out |
                                                  std::ios::binary | std::ios::trunc);
 #endif
-    fs::resize_file(file_path, torrent.info.length);
+    if (!files_built) {
+        fs::resize_file(file_path, torrent.info.length);
+    }
     tf->global_offset = 0;
     tf->path = file_path;
     tf->size = torrent.info.length;
@@ -283,8 +292,10 @@ void TorrentState::init_torfiles(fs::path where) {
 }
 
 // --- try_save
-bool TorrentState::try_save(fs::path filename, const std::set<Peer, PeerComparer>& peers) {
-    std::ofstream file(filename == "" ? fs::path(torrent.info_hash + ".state") : filename,
+bool TorrentState::try_save(fs::path filename,
+                            const std::set<Peer, PeerComparer> &peers) {
+    std::ofstream file(filename == fs::path() ? fs::path(torrent.info_hash + ".state")
+                                              : filename,
                        std::ios::binary);
     if (!file) {
         spdlog::error("Cannot save Torrent State to file! Aborting");
@@ -320,7 +331,7 @@ bool TorrentState::try_save(fs::path filename, const std::set<Peer, PeerComparer
     return true;
 }
 
-bool TorrentState::try_load(fs::path filepath, std::set<Peer, PeerComparer>& peers) {
+bool TorrentState::try_load(fs::path filepath, std::set<Peer, PeerComparer> &peers) {
     std::ifstream file(filepath, std::ios::binary);
     if (!file) {
         spdlog::error("Cannot open file {}", filepath.string());
@@ -390,7 +401,7 @@ std::vector<uint8_t> TorrentState::get_piece_by_index(size_t index) const {
 
     // найти первый файл, с оффсетом <= оффсета куска
     auto it = torfiles.lower_bound(piece_global_offset);
-    if (it != torfiles.end()) {
+    if (it != torfiles.begin()) {
         --it;
     }
 
@@ -423,8 +434,8 @@ uint64_t TorrentState::downloaded() const {
     uint64_t downloaded = 0;
     uint64_t size = pieces.size();
     for (uint64_t i = 0; i < size; i++) {
-        if (pieces[i].state == PieceStatus::State::Done) {
-            downloaded += pieces[i].total_size;
+        if (pieces[i].state != PieceStatus::State::Missing) {
+            downloaded += pieces[i].downloaded;
         }
     }
     return downloaded;

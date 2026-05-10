@@ -11,6 +11,11 @@
 
 #define THREAD_COUNT 4
 
+struct PeerHandle {
+    Peer peer;
+    asio::cancellation_signal cancel;
+};
+
 struct Downloader {
     TorrentState &ts;
     asio::io_context &ctx;
@@ -19,6 +24,8 @@ struct Downloader {
     AsyncHttpConn async_http_tracker_conn;
     std::set<Peer, PeerComparer> peer_list;
     std::set<Peer, PeerComparer> connected_peers;
+    std::list<PeerHandle> peer_handles;
+    std::set<Peer, PeerComparer> bad_peers; // пиры, у которых больше нечего качать
     std::string client_id = "-BT7105-123456789101";
     uint16_t port = 6888;
     int interval = 30;
@@ -41,7 +48,6 @@ struct Downloader {
     awaitable<void> run() {
         // сохраняем стейт в конце при выходе из функции
         defer({
-            spdlog::info("First defer");
             try {
                 ts.try_save(fs::path(ts.torrent.info_hash + ".state"), peer_list);
             } catch (const std::exception &e) {
@@ -57,7 +63,8 @@ struct Downloader {
             }
         });
 
-        // ts.try_load(fs::current_path() / fs::path(ts.torrent.info_hash + ".state"), peer_list);
+        // ts.try_load(fs::current_path() / fs::path(ts.torrent.info_hash + ".state"),
+        // peer_list);
 
         if (ts.is_done()) {
             spdlog::warn("Torrent already done, aborting");
@@ -94,7 +101,7 @@ struct Downloader {
             auto progress_elapsed =
                 std::chrono::duration_cast<std::chrono::seconds>(now - last_progress)
                     .count();
-            if (progress_elapsed > 10) {
+            if (progress_elapsed > 40) {
                 reconnect_peers();
                 last_progress = now; // сбрасываем таймер
             }
@@ -103,7 +110,7 @@ struct Downloader {
             auto clear_elapsed =
                 std::chrono::duration_cast<std::chrono::seconds>(now - last_clear)
                     .count();
-            if (clear_elapsed > 5) {
+            if (clear_elapsed > 30) {
                 ts.clear_downloading_pieces();
                 last_clear = now;
             }
@@ -156,7 +163,7 @@ struct Downloader {
         std::string path =
             announce_path + 
             "?info_hash=" + ts.torrent.urlencoded_info_hash +
-            "&peer_id=" + client_id + 
+            "&peer_id=" + ts.client_id + 
             "&port=" + std::to_string(port) + 
             "&uploaded=0" +
             "&downloaded=" + std::to_string(ts.downloaded()) +
@@ -210,15 +217,20 @@ struct Downloader {
             if (connected_peers.count(peer)) {
                 continue;
             }
-
+            if (bad_peers.contains(peer)) {
+                continue;
+            }
             connected_peers.emplace(peer);
-
+            auto& handle = peer_handles.emplace_back(peer);
             asio::co_spawn(
                 ctx,
-                [this, peer]() -> awaitable<void> {
+                [this, peer, &handle]() -> awaitable<void> {
                     try {
                         auto pc = co_await PeerConn2::create(ctx, peer, ts);
                         co_await pc->run();
+                        if (pc->downloaded_all_what_can) {
+                            bad_peers.emplace(peer);
+                        }
                     } catch (const asio::system_error &e) {
                         spdlog::warn("[{}] asio error: {} ({})", peer.str(), e.what(),
                                      e.code().message());
@@ -229,11 +241,13 @@ struct Downloader {
                     }
                     spdlog::debug("[{}] coroutine exited", peer.str());
                 },
-                asio::detached);
+                asio::bind_cancellation_slot(handle.cancel.slot(), asio::detached));
         }
     }
-
     void reconnect_peers() {
+        for (auto &h : peer_handles)
+            h.cancel.emit(asio::cancellation_type::terminal);
+        peer_handles.clear();
         connected_peers.clear();
         spdlog::info("[{}] Reconnecting to peers", ts.torrent.info_hash);
     }

@@ -27,7 +27,7 @@ awaitable<void> AsyncConn::recv_into(void *buf, uint64_t size) {
 awaitable<std::shared_ptr<PeerConn2>> PeerConn2::create(asio::io_context &ioc, Peer p,
                                                         TorrentState &ts) {
     if (ts.is_done()) {
-        throw new std::runtime_error("TorrentState is done, abort connection");
+        throw std::runtime_error("TorrentState is done, abort connection");
     }
     auto c = std::make_shared<PeerConn2>(
         PeerConn2{p, co_await AsyncConn::connect(ioc, p), ts});
@@ -254,7 +254,10 @@ awaitable<void> PeerConn2::handle_piece(const Message &msg) {
         std::lock_guard<std::mutex> lock(torrent_state.pieces_mutex);
         torrent_state.pieces[msg.index].state = PieceStatus::State::Done;
     }
-
+    downloaded[msg.index] = true;
+    if (downloaded == bitfield) {
+        downloaded_all_what_can = true;
+    }
     spdlog::info("[{}] Piece {} written to disk", peer.str(), msg.index);
 }
 
@@ -265,7 +268,7 @@ awaitable<void> PeerConn2::run() {
     }
     spdlog::info("[{}] Handshake OK", peer.str());
 
-    while (!torrent_state.is_done()) {
+    while (!torrent_state.is_done() || !downloaded_all_what_can) {
         Message msg = co_await recv_message();
 
         switch (msg.type) {
@@ -281,15 +284,21 @@ awaitable<void> PeerConn2::run() {
         case MessageType::Unchoke:
             peer_choking = false;
             spdlog::info("[{}] Unchoked", peer.str());
-            if (am_interested)
+            if (am_interested) {
                 co_await request_next_piece();
+            } else {
+                co_await send_interested();
+                co_await request_next_piece();
+            }
             break;
 
         case MessageType::Have:
             if (msg.index < bitfield.size() && !bitfield[msg.index]) {
                 bitfield[msg.index] = true;
-                std::lock_guard lock(torrent_state.pieces_mutex);
-                torrent_state.piece_orderer.counts[msg.index]++;
+                downloaded[msg.index] =
+                    torrent_state.pieces[msg.index].state != PieceStatus::State::Missing;
+                // std::lock_guard lock(torrent_state.pieces_mutex);
+                // torrent_state.piece_orderer.counts[msg.index]++;
             }
             break;
 
@@ -302,17 +311,30 @@ awaitable<void> PeerConn2::run() {
             // парсим новый
             bitfield.clear();
             bitfield.reserve(msg.data.size() * 8);
-            for (size_t i = 0; i < msg.data.size(); i++)
-                for (int bit = 7; bit >= 0; bit--)
+            downloaded.reserve(msg.data.size() * 8);
+            size_t idx = 0;
+            for (size_t i = 0; i < msg.data.size(); i++) {
+                for (int bit = 7; bit >= 0; bit--) {
                     bitfield.push_back((msg.data[i] >> bit) & 1);
-            {
-                std::lock_guard lock(torrent_state.pieces_mutex);
-                torrent_state.piece_orderer.add_bitfield(bitfield);
+                    downloaded.push_back(
+                        ((msg.data[i] >> bit) & 1) &&
+                        (torrent_state.pieces[idx].state != PieceStatus::State::Missing));
+                    idx++;
+                }
             }
+            if(bitfield == downloaded){
+                downloaded_all_what_can = true;
+                break;
+            }
+            // {
+            //     std::lock_guard lock(torrent_state.pieces_mutex);
+            //     torrent_state.piece_orderer.add_bitfield(bitfield);
+            // }
             spdlog::info("[{}] Got bitfield", peer.str());
             am_interested = true;
-            if (!peer_choking)
+            if (!peer_choking) {
                 co_await send_interested();
+            }
             break;
 
         case MessageType::Piece: {
@@ -327,15 +349,19 @@ awaitable<void> PeerConn2::run() {
 
             if (!piece_done && !was_done) {
                 // // кусок не завершён — следующий блок
-                //uint32_t next = torrent_state.pieces[msg.index].downloaded;
-                //uint32_t remain = torrent_state.pieces[msg.index].total_size - next;
-                //uint32_t block = std::min(remain, (uint32_t)16384);
-                //if (block > 0)
+                // uint32_t next = torrent_state.pieces[msg.index].downloaded;
+                // uint32_t remain = torrent_state.pieces[msg.index].total_size - next;
+                // uint32_t block = std::min(remain, (uint32_t)16384);
+                // if (block > 0)
                 //    co_await send_request(msg.index, next, block);
                 break;
             } else {
                 // кусок завершён — следующий кусок
-                co_await request_next_piece();
+                bool reqv = co_await request_next_piece();
+                if (reqv) {
+                    downloaded_all_what_can = true;
+                    break;
+                }
             }
             break;
         }
@@ -352,23 +378,27 @@ awaitable<void> PeerConn2::run() {
         torrent_state.piece_orderer.remove_bitfield(bitfield);
     }
 
-    spdlog::info("[{}] Done", peer.str());
+    spdlog::info("[{}] Finish", peer.str());
 }
 
-awaitable<void> PeerConn2::request_next_piece() {
+awaitable<bool> PeerConn2::request_next_piece() {
     int piece = torrent_state.next_missing_piece(bitfield);
     if (piece < 0)
-        co_return; // нечего качать у этого пира
+        co_return false; // нечего качать у этого пира
     {
         std::lock_guard<std::mutex> lock(torrent_state.pieces_mutex);
         // ещё раз проверяем под мьютексом — другой поток мог занять кусок
         if (torrent_state.pieces[piece].state != PieceStatus::State::Missing)
-            co_return;
+            co_return false;
         torrent_state.pieces[piece].state = PieceStatus::State::Downloading;
         torrent_state.pieces[piece].last_interacted = std::chrono::steady_clock::now();
     }
-    for(size_t i = 0; i < torrent_state.pieces[piece].total_size; i+= 16384){
-        co_await send_request(piece, i, std::min(torrent_state.pieces[piece].total_size - i, 16384ul));
+    for (size_t i = 0; i < torrent_state.pieces[piece].total_size; i += 16384) {
+        co_await send_request(
+            piece, i,
+            std::min((size_t)(torrent_state.pieces[piece].total_size - i),
+                     (size_t)(16384)));
     }
-    //co_await send_request(piece, 0, 16384);
+    co_return true;
+    // co_await send_request(piece, 0, 16384);
 }

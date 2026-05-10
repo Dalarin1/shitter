@@ -42,6 +42,8 @@ struct PeerConn2 {
     bool peer_interested = false;
 
     std::vector<bool> bitfield{};
+    std::vector<bool> downloaded{};
+    bool downloaded_all_what_can = false;
 
     static awaitable<std::shared_ptr<PeerConn2>> create(asio::io_context &ioc, Peer p,
                                                         TorrentState &ts);
@@ -61,7 +63,7 @@ struct PeerConn2 {
     /// @param msg Распаршенное сообщение от пира
     awaitable<void> handle_piece(const Message &msg);
     awaitable<void> run();
-    awaitable<void> request_next_piece();
+    awaitable<bool> request_next_piece();
 };
 
 #endif // INCLUDE_ASYNC_HPP_

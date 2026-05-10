@@ -67,6 +67,7 @@ struct SFile {
                 CloseHandle(handle);
             handle = other.handle;
             other.handle = INVALID_HANDLE_VALUE;
+            path = std::move(other.path);
         }
         return *this;
     }
@@ -74,6 +75,7 @@ struct SFile {
         // spdlog::info("SFile(SFile &&other)");
         handle = other.handle;
         other.handle = INVALID_HANDLE_VALUE;
+        path = std::move(other.path); 
     }
 
     inline void close() {
@@ -99,15 +101,17 @@ struct SFile {
                              OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 
         if (handle == INVALID_HANDLE_VALUE) {
-            spdlog::error("Cannot open file {}, reason: {}", filepath.string(), GetLastError());
+            DWORD err = GetLastError();
+            spdlog::error("Cannot open file {}, reason: {}", filepath.string(), err);
+            if(err == 3){
+                spdlog::error("Tried to open file at: {}", filepath.string());
+            }
             return false;
         }
         return true;
     }
     inline void change_mode(unsigned int flags) { open(path, flags); }
     inline bool is_open() { return handle != INVALID_HANDLE_VALUE; }
-
-  private:
 };
 
 #else // POSIX
@@ -138,6 +142,7 @@ struct SFile {
     SFile(SFile &&other) noexcept {
         fd = other.fd;
         other.fd = -1;
+        path = std::move(other.path);
     }
     SFile &operator=(SFile &&other) noexcept {
         if (this != &other) {
@@ -145,6 +150,7 @@ struct SFile {
                 ::close(fd);
             fd = other.fd;
             other.fd = -1;
+            path = std::move(other.path); 
         }
         return *this;
     }
