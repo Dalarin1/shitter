@@ -358,7 +358,7 @@ awaitable<void> PeerConn2::run() {
             } else {
                 // кусок завершён — следующий кусок
                 bool reqv = co_await request_next_piece();
-                if (reqv) {
+                if (!reqv) {
                     downloaded_all_what_can = true;
                     break;
                 }
