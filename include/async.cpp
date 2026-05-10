@@ -270,7 +270,7 @@ awaitable<void> PeerConn2::run() {
 
     while (!torrent_state.is_done() || !downloaded_all_what_can) {
         Message msg = co_await recv_message();
-
+        size_t __idx = 0;
         switch (msg.type) {
         case MessageType::KeepAlive:
             co_await send_keep_alive();
@@ -312,17 +312,17 @@ awaitable<void> PeerConn2::run() {
             bitfield.clear();
             bitfield.reserve(msg.data.size() * 8);
             downloaded.reserve(msg.data.size() * 8);
-            size_t idx = 0;
+
             for (size_t i = 0; i < msg.data.size(); i++) {
                 for (int bit = 7; bit >= 0; bit--) {
                     bitfield.push_back((msg.data[i] >> bit) & 1);
-                    downloaded.push_back(
-                        ((msg.data[i] >> bit) & 1) &&
-                        (torrent_state.pieces[idx].state != PieceStatus::State::Missing));
-                    idx++;
+                    downloaded.push_back(((msg.data[i] >> bit) & 1) &&
+                                         (torrent_state.pieces[__idx].state !=
+                                          PieceStatus::State::Missing));
+                    __idx++;
                 }
             }
-            if(bitfield == downloaded){
+            if (bitfield == downloaded) {
                 downloaded_all_what_can = true;
                 break;
             }
