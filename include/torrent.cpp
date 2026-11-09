@@ -16,7 +16,7 @@ std::vector<Peer> parse_peers(const std::string &peers_binary) {
     std::vector<Peer> res;
     res.reserve(peers_binary.size() / 6);
     Peer tmp = Peer();
-    for (size_t i = 0; i < peers_binary.size(); i += 6) {
+    for (size_t i = 0; i + 5 < peers_binary.size(); i += 6) {
         tmp.ip[0] = static_cast<uint8_t>(peers_binary[i]);
         tmp.ip[1] = static_cast<uint8_t>(peers_binary[i + 1]);
         tmp.ip[2] = static_cast<uint8_t>(peers_binary[i + 2]);
@@ -31,11 +31,15 @@ std::vector<Peer> parse_peers(const std::string &peers_binary) {
 
 // ─── TorrentState ────────────────────────────────────────────────────────────
 
-TorrentState::TorrentState(const Torrent &t)
+TorrentState::TorrentState(const Torrent &t, fs::path dest_folder = fs::current_path())
     : torrent(t), piece_orderer(t.info.pieces.size()) {
     torrent_map[torrent.info_hash_raw] = this;
 
     pieces.resize(t.info.pieces.size());
+    // for(size_t i = 0; i < t.info.pieces.size(); i++){
+    //     pieces.push_back();
+    // }
+
 
     client_id = "-BT7105-123456789101";
     for (size_t i = 0; i < pieces.size(); i++) {
@@ -53,14 +57,14 @@ TorrentState::TorrentState(const Torrent &t)
 
         if (!success) {
             spdlog::error("State file loading failed; Creating torrent files");
-            preallocate_files(fs::current_path());
+            preallocate_files(dest_folder);
         } else {
-            init_torfiles(fs::current_path());
+            init_torfiles(dest_folder);
             spdlog::info("State successfully loaded");
         }
     } else {
-        spdlog::error("State file loading failed; Creating torrent files");
-        preallocate_files(fs::current_path());
+        spdlog::warn("State file not exists; Creating torrent files");
+        preallocate_files(dest_folder);
     }
 
     spdlog::debug("TorrentState initialized: {} pieces, total {} bytes", pieces.size(),
@@ -252,11 +256,19 @@ void TorrentState::init_torfiles(fs::path where) {
             auto tf = std::make_unique<TorFile>();
 #ifdef USING_SFILE
             tf->descriptor = SFile(file_path, SFILE_READ | SFILE_WRITE);
+            if(!tf->descriptor.is_open()){
+                spdlog::error("Cant open file {}", file_path.string());
+                throw std::runtime_error("Cant open file");
+            }
 #else
             spdlog::debug("Creating file {}", file_path.string());
             tf->descriptor =
                 std::fstream(file_path, std::ios::in | std::ios::out | std::ios::binary |
                                             std::ios::trunc);
+            if(!tf->descriptor.open()){
+                spdlog::error("Cant open file {}", file_path.string());
+                throw std::runtime_error("Cant open file");
+            }
 
 #endif
             if (!files_built) {

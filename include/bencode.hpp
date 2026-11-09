@@ -47,6 +47,11 @@ BencodeVal _read_dict(std::istream &);
 
 BencodeVal read_bencode(std::istream &);
 
+std::string bencode_int(uint64_t val);
+std::string bencode_string(const std::string& str);
+std::string bencode_list(const std::vector<std::string>& str);
+std::string bencode_dict(const std::vector<std::pair<std::string, std::string>>& dict);
+
 std::string encode_bencode(const BencodeVal &val);
 
 void print_bencodeval(const BencodeVal &bv, std::ostream &out = std::cout,

@@ -5,6 +5,7 @@
 #include "torrent.hpp"
 #include "boss.hpp"
 #include "sender.hpp"
+#include "dht-slop.hpp"
 
 namespace fs = std::filesystem;
 
@@ -14,8 +15,8 @@ struct TorrentSession {
     TorrentState torrent_state;
     Downloader downloader;
 
-    explicit TorrentSession(asio::io_context &ioc, Torrent t)
-        : ctx(ioc), torrent_state(t), downloader(torrent_state, ctx) {}
+    explicit TorrentSession(asio::io_context &ioc, Torrent t, fs::path dst)
+        : ctx(ioc), torrent_state(t, dst), downloader(torrent_state, ctx) {}
 };
 
 struct App {
@@ -24,8 +25,8 @@ struct App {
     std::list<TorrentSession> sessions;
     std::vector<std::thread> download_threads;
     SeedServer uploader;
-
-    App() : work_guard(asio::make_work_guard(ctx)), uploader(ctx, 6888) {
+    DHTClient dht_client;
+    App() : work_guard(asio::make_work_guard(ctx)), uploader(ctx, 6888), dht_client(ctx) {
         spdlog::debug("App built");
         for (short i = 0; i < THREAD_COUNT; i++) {
             download_threads.emplace_back([this]() { ctx.run(); });
@@ -33,16 +34,17 @@ struct App {
         spdlog::debug("Started {} threads", THREAD_COUNT);
 
         // asio::co_spawn(
-        //     ctx, [&]() -> awaitable<void> { co_await uploader.run(); }, asio::detached);
+        //     ctx, [&]() -> awaitable<void> { co_await uploader.run(); },
+        //     asio::detached);
 
         spdlog::debug("SeedServer started");
     }
 
-    void add_torrent(fs::path torrent) {
+    void add_torrent(fs::path torrent, fs::path dest_folder = fs::current_path()) {
         // add and start new session
         Torrent t(torrent);
-        print_torrent(t);
-        sessions.emplace_back(ctx, t);
+        // print_torrent(t);
+        sessions.emplace_back(ctx, t, dest_folder);
         spdlog::debug("Added new session for torrent {}", t.info_hash);
 
         auto *dl = &sessions.back().downloader;
@@ -61,8 +63,15 @@ struct App {
                 ctx.stop();
             }
         };
+
         asio::co_spawn(
-            ctx, [dl]() -> awaitable<void> { co_await dl->run(); }, asio::detached);
+            ctx,
+            [dl, this]() -> awaitable<void> {
+                dl->add_peers(
+                    co_await dht_client.find_peers(dl->ts.torrent.info_hash_raw));
+                co_await dl->run();
+            },
+            asio::detached);
         spdlog::debug("Spawned downloader.run()");
     }
 

@@ -3,7 +3,6 @@ import time
 
 st = time.time()
 cpp_files = []
-print(os.system('pwd'))
 folders = ["include", "src"]
 for folder in folders:
     for entry in os.scandir(folder):
@@ -43,8 +42,7 @@ flags = [
     "-Wextra",
     "-g",
     "-L lib",
-    '-pthread'
-    # "-DSPDLOG_COMPILED_LIB",
+    "-DSPDLOG_COMPILED_LIB",
 ]
 
 command = f"{compiler} {' '.join(cpp_files)} {inludes} {' '.join(libraries)} {' '.join(flags)} -o {executable}"

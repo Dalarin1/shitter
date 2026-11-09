@@ -1,7 +1,6 @@
 #include <openssl/sha.h>
 
 template <typename DS> std::string sha1(const DS &data) {
-    ;
     std::string res(20, '\0');
     SHA1(reinterpret_cast<const unsigned char *>(data.data()), data.size(),
          reinterpret_cast<unsigned char *>(res.data()));

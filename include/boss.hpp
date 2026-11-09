@@ -55,7 +55,8 @@ struct Downloader {
             }
         });
 
-        defer({ ts.set_descriptors_to_readonly(); });
+        defer({ 
+            ts.set_descriptors_to_readonly(); });
 
         defer({
             if (on_complete) {
@@ -180,6 +181,12 @@ struct Downloader {
         co_return AsyncHttpConn::response{false, 404, "OLEG"};
     }
 
+    void add_peers(std::vector<Peer> peers){
+        for(auto i: peers){
+            peer_list.insert(i);
+        }
+    }
+
   private:
     awaitable<void> async_send_start_and_recv_peers() {
         spdlog::debug("CALL async_send_start_and_recv_peers");
@@ -210,7 +217,6 @@ struct Downloader {
             peer_list.emplace(p);
         }
     }
-
     void spawn_new_peers() {
         spdlog::debug("Spawning new peers");
         for (auto peer : peer_list) {

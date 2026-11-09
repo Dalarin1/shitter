@@ -2,11 +2,11 @@
 
 BencodeVal _read_int(std::istream &file) {
     std::string buf;
-    buf.reserve(21); 
+    buf.reserve(21);
     char c;
     bool neg = false;
 
-    file.read(&c, 1); 
+    file.read(&c, 1);
     while (file.read(&c, 1)) {
         if (c == 'e')
             break;
@@ -134,27 +134,24 @@ BencodeVal read_bencode(std::istream &file) {
     return res;
 }
 
-std::string encode_bencode(const BencodeVal& val){
+std::string encode_bencode(const BencodeVal &val) {
     std::string out;
 
     if (val.is_int()) {
         out += 'i';
         out += std::to_string(val.get_int());
         out += 'e';
-    }
-    else if (val.is_str()) {
+    } else if (val.is_str()) {
         const std::string &s = val.get_str();
         out += std::to_string(s.size());
         out += ':';
         out += s;
-    }
-    else if (val.is_list()) {
+    } else if (val.is_list()) {
         out += 'l';
         for (const auto &item : val.get_list())
             out += encode_bencode(item);
         out += 'e';
-    }
-    else if (val.is_dict()) {
+    } else if (val.is_dict()) {
         out += 'd';
         for (const auto &[key, value] : val.get_dict()) {
             out += std::to_string(key.size());
@@ -168,7 +165,32 @@ std::string encode_bencode(const BencodeVal& val){
     return out;
 }
 
-void print_bencodeval(const BencodeVal &bv, std::ostream& out, bool _endl) {
+std::string bencode_string(const std::string &s) {
+    return std::to_string(s.size()) + ":" + s;
+}
+
+std::string bencode_int(int64_t i) { return "i" + std::to_string(i) + "e"; }
+std::string bencode_int(uint64_t i) { return "i" + std::to_string(i) + "e"; }
+
+std::string bencode_dict(const std::vector<std::pair<std::string, std::string>> &items) {
+    std::string result = "d";
+    for (const auto &[key, val] : items) {
+        result += bencode_string(key) + val;
+    }
+    result += "e";
+    return result;
+}
+
+std::string bencode_list(const std::vector<std::string> &items) {
+    std::string result = "l";
+    for (const auto &item : items) {
+        result += item;
+    }
+    result += "e";
+    return result;
+}
+
+void print_bencodeval(const BencodeVal &bv, std::ostream &out, bool _endl) {
     if (bv.is_int()) {
         out << bv.get_int();
     }
@@ -194,7 +216,6 @@ void print_bencodeval(const BencodeVal &bv, std::ostream& out, bool _endl) {
     if (_endl) {
         out << std::endl;
     } else {
-       out << ", ";
+        out << ", ";
     }
 }
-

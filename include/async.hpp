@@ -49,6 +49,7 @@ struct PeerConn2 {
                                                         TorrentState &ts);
     awaitable<bool> do_handshake();
     awaitable<Message> recv_message();
+    awaitable<std::optional<Message>> recv_message_timeout(std::chrono::seconds timeout);
     awaitable<void> send_interested();
     awaitable<void> send_not_interested();
     awaitable<void> send_keep_alive();

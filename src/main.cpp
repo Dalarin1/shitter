@@ -1,13 +1,22 @@
 #include "torrent.hpp"
 #include "spdlog/spdlog.h"
+#include "spdlog/sinks/basic_file_sink.h"
 #include "boss.hpp"
 #include "sender.hpp"
 #include "session.hpp"
 
-int main(int argc, char** argv) {
-    fs::path torrent = fs::current_path() / fs::path("(JPop, JRock) HIGH and MIGHTY COLOR - Re ache (Single) - 2010, MP3 (tracks), 192 kbps [rutracker-3102615].torrent");
+int main(int argc, char **argv) {
+    
+    // auto file_logger = spdlog::basic_logger_mt("basic_logger", "logs/basic.txt");
+    // spdlog::set_default_logger(file_logger);
 
+    App app;
+    
 
+    fs::path torrent = fs::current_path() / "test" /
+                       fs::path("Высокая кухня - Похлебкин В. В. - ЧАЙ [2007, PDF, RUS] "
+                                "[rutracker-605222].torrent");
+    fs::path dest_folder = fs::current_path();
     for (int i = 1; i < argc; i++) {
         std::string arg(argv[i]);
 
@@ -20,8 +29,13 @@ int main(int argc, char** argv) {
             }
             torrent = fs::path(argv[i + 1]);
         }
+        if(arg == "-f" || arg == "--folder"){
+            if (i + 1 >= argc) {
+                throw std::runtime_error("GDE DESTINATION FOLDER SUKA");
+            }
+            dest_folder = fs::path(argv[i+1]);
+        }
     }
 
-    App app;
-    app.add_torrent(torrent);
+    app.add_torrent(torrent, dest_folder);
 }

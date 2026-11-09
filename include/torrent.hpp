@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <chrono>
 #include <unordered_map>
+#include <deque>
 #include "bencode.hpp"
 #include "protocol.hpp"
 #include "sha1.hpp"
@@ -52,6 +53,7 @@ struct Torrent {
 };
 
 struct PieceStatus {
+    std::mutex mut;
     enum class State : uint8_t { Missing, Downloading, Done } state = State::Missing;
     std::vector<uint8_t> buffer;
     uint32_t downloaded = 0;
@@ -144,14 +146,14 @@ struct TorrentState {
     std::string client_id;
 
     std::mutex pieces_mutex;
-    std::vector<PieceStatus> pieces;
+    std::deque<PieceStatus> pieces;
 
     std::set<std::unique_ptr<TorFile>, TorFileOffsetComparer> torfiles;
 
     PieceOrderer piece_orderer;
     inline static std::unordered_map<std::array<uint8_t, 20>, TorrentState *, ArrayHash> torrent_map;
 
-    TorrentState(const Torrent &t);
+    TorrentState(const Torrent &t, fs::path dest_folder);
     int next_missing_piece() const;
     int next_missing_piece(const std::vector<bool> &peer_bitfield) const;
     bool is_done() const;
